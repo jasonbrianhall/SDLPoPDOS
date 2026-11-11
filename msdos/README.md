@@ -131,3 +131,26 @@ How it fits together:
     32-bit modes; per-frame palette for mode 13h).
   * src/midi.c -- on DOS the music goes to the real OPL chip.
   * main.c includes SDL_main.h, which on DOS sets up the near pointers SDL needs.
+
+
+Changes to SDL3
+---------------
+
+SDL3/ is SDL's source as released, except for these changes (marked
+"SDLPoP-DOS" in the code), all in its DOS port:
+
+  * src/core/dos/SDL_dos.c, SDL_dos.h -- the keyboard and Sound Blaster
+    interrupt handlers are installed on their own (IRET wrapper), not chained
+    to the previous handler. Chained, every interrupt also went to the
+    real-mode BIOS with a second EOI, and on a virtualized keyboard
+    controller (vmdos) the BIOS could read the second byte of an E0-prefixed
+    key (the arrow keys, Home, Delete, Esc after them) before SDL did.
+  * src/video/dos/SDL_dosevents.c -- no draining of the BIOS keyboard buffer
+    on every event pump (it stays empty now), and the mouse driver (INT 33h,
+    a trip to real mode) is asked at most 100 times a second.
+  * src/timer/dos/SDL_systimer.c -- the performance counter never goes
+    backwards (uclock() can step back a little under virtualized timers).
+
+These matter most under a hypervisor such as vmdos
+(https://github.com/jasonbrianhall/vmdos), where every port access and
+every call to real mode is a trap; they cost nothing on a real PC or DOSBox.

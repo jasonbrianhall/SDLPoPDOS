@@ -341,10 +341,15 @@ static bool opl_hw_audible = true;
 static void opl_hw_out(word reg, byte value) {
 	int port = OPL_PORT + ((reg & 0x100) ? 2 : 0);
 	if (opl_hw < 3 && (reg & 0x100)) return; // OPL2: no second register bank
+	// The chip needs time between writes: an OPL2 3.3 us after the register
+	// number and 23 us after the value, an OPL3 almost none. A port read takes
+	// about 1 us on the ISA bus (and is a trap under a hypervisor like vmdos,
+	// so no more of them than needed).
+	int after_reg = opl_hw == 3 ? 1 : 6, after_value = opl_hw == 3 ? 2 : 35;
 	outportb(port, reg & 0xFF);
-	for (int i = 0; i < 6; ++i) inportb(OPL_PORT);   // 3.3 us
+	for (int i = 0; i < after_reg; ++i) inportb(OPL_PORT);
 	outportb(port + 1, value);
-	for (int i = 0; i < 35; ++i) inportb(OPL_PORT);  // 23 us (OPL2; OPL3 needs less)
+	for (int i = 0; i < after_value; ++i) inportb(OPL_PORT);
 }
 
 static int opl_hw_detect(void) {

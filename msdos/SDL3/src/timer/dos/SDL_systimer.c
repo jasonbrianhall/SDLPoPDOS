@@ -34,7 +34,17 @@
 
 Uint64 SDL_GetPerformanceCounter(void)
 {
-    return (Uint64)uclock();
+    /* SDLPoP-DOS: uclock() combines the BIOS tick count with the PIT counter;
+       when the two are read across a tick (virtualized timers especially, as
+       under vmdos), it can step back a little. SDL and games subtract counter
+       values, so never let it go backwards. */
+    static Uint64 last;
+    Uint64 now = (Uint64)uclock();
+    if (now < last) {
+        return last;
+    }
+    last = now;
+    return now;
 }
 
 Uint64 SDL_GetPerformanceFrequency(void)

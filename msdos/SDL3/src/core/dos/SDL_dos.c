@@ -98,7 +98,24 @@ void DOS_HookInterrupt(int irq, DOS_InterruptHookFn fn, DOS_InterruptHook *hook)
     hook->irq_handler_seginfo.pm_selector = _go32_my_cs();
     hook->irq_handler_seginfo.pm_offset = (uint32_t)fn;
     _go32_dpmi_get_protected_mode_interrupt_vector(hook->interrupt_vector, &hook->original_irq_handler_seginfo);
-    _go32_dpmi_chain_protected_mode_interrupt_vector(hook->interrupt_vector, &hook->irq_handler_seginfo);
+    /* SDLPoP-DOS: the handlers (keyboard, Sound Blaster) read their device and
+       send the EOI themselves, so they are installed on their own, with an
+       IRET wrapper, the way DOS games do it, rather than chained to the
+       previous handler. Chaining meant a second EOI and a trip to the real-mode
+       BIOS on every interrupt; and on the keyboard, once SDL's EOI was sent, a
+       virtualized 8042 (vmdos) could put the next byte in port 60h before the
+       BIOS read it, so the second byte of E0-prefixed keys (the arrows) went to
+       the BIOS instead of SDL. */
+    if (_go32_dpmi_allocate_iret_wrapper(&hook->irq_handler_seginfo) != 0) {
+        /* No wrapper: chain as before. */
+        hook->irq_handler_seginfo.pm_selector = _go32_my_cs();
+        hook->irq_handler_seginfo.pm_offset = (uint32_t)fn;
+        hook->chained = true;
+        _go32_dpmi_chain_protected_mode_interrupt_vector(hook->interrupt_vector, &hook->irq_handler_seginfo);
+    } else {
+        hook->chained = false;
+        _go32_dpmi_set_protected_mode_interrupt_vector(hook->interrupt_vector, &hook->irq_handler_seginfo);
+    }
 
     // enable interrupt on the correct PIC
     if (irq > 7) {
@@ -127,6 +144,9 @@ void DOS_UnhookInterrupt(DOS_InterruptHook *hook, bool disable_interrupt)
     }
 
     _go32_dpmi_set_protected_mode_interrupt_vector(hook->interrupt_vector, &hook->original_irq_handler_seginfo);
+    if (!hook->chained) {
+        _go32_dpmi_free_iret_wrapper(&hook->irq_handler_seginfo);
+    }
 
     // Note: _go32_dpmi_chain_protected_mode_interrupt_vector internally
     // allocates a wrapper, but it is NOT safe to free it with
