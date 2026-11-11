@@ -78,13 +78,8 @@ void find_exe_dir(void) {
 }
 
 #if ! (defined WIN32 || _WIN32 || WIN64 || _WIN64)
-// Looked for once: when the folder isn't there (always, on MS-DOS), asking again
-// on every file lookup cost two system calls each time.
-static bool checked_home_dir, checked_share_dir;
-
 void find_home_dir(void) {
-	if (found_home_dir || checked_home_dir) return;
-	checked_home_dir = true;
+	if (found_home_dir) return;
 	const char* home_path = getenv("HOME");
 	snprintf_check(home_dir, POP_MAX_PATH - 1, "%s/.%s", home_path, POP_DIR_NAME);
 	if(file_exists(home_dir))
@@ -92,102 +87,15 @@ void find_home_dir(void) {
 }
 
 void find_share_dir(void) {
-	if (found_share_dir || checked_share_dir) return;
-	checked_share_dir = true;
+	if (found_share_dir) return;
 	snprintf_check(share_dir, POP_MAX_PATH - 1, "%s/%s", SHARE_PATH, POP_DIR_NAME);
 	if(file_exists(share_dir))
 		found_share_dir = true;
 }
 #endif
 
-#ifdef __DJGPP__
-// MS-DOS: SDLPoP looks for a loose file (data/KID/res751.png, mods/X/data/...) for
-// every sprite and sound, in several directories, before using the DAT file. On
-// DOS each look is a few INT 21h calls (through DPMI to real mode; under a
-// hypervisor such as vmdos, a long trip each), which made loading take minutes.
-// So the resource folders (any path with a "data" folder in it; they don't change
-// while the game runs) are listed once, and asked from memory afterwards.
-#include <dirent.h>
-typedef struct dir_cache_type {
-	char dir[POP_MAX_PATH];
-	int count;
-	char** names;
-} dir_cache_type;
-static dir_cache_type* dir_caches;
-static int dir_cache_count;
-
-static const dir_cache_type* get_dir_cache(const char* dir) {
-	for (int i = 0; i < dir_cache_count; ++i) {
-		if (strcasecmp(dir_caches[i].dir, dir) == 0) return &dir_caches[i];
-	}
-	dir_cache_type* grown = realloc(dir_caches, (dir_cache_count + 1) * sizeof(dir_cache_type));
-	if (grown == NULL) return NULL;
-	dir_caches = grown;
-	dir_cache_type* c = &dir_caches[dir_cache_count++];
-	snprintf(c->dir, sizeof(c->dir), "%s", dir);
-	c->count = 0;
-	c->names = NULL;
-	DIR* d = opendir(dir[0] ? dir : ".");
-	if (d != NULL) {
-		int cap = 0;
-		struct dirent* e;
-		while ((e = readdir(d)) != NULL) {
-			if (c->count == cap) {
-				cap = cap ? cap * 2 : 32;
-				char** n = realloc(c->names, cap * sizeof(char*));
-				if (n == NULL) break;
-				c->names = n;
-			}
-			c->names[c->count++] = strdup(e->d_name);
-		}
-		closedir(d);
-	}
-	return c;
-}
-
-static bool is_resource_path(const char* path) {
-	for (const char* p = path; *p; ++p) {
-		if ((p == path || p[-1] == '/' || p[-1] == '\\') && strncasecmp(p, "data", 4) == 0 &&
-		    (p[4] == '/' || p[4] == '\\' || p[4] == '\0')) return true;
-	}
-	return false;
-}
-
-bool file_exists(const char* filename) {
-	if (!is_resource_path(filename)) return (access(filename, F_OK) != -1);
-	char dir[POP_MAX_PATH];
-	snprintf(dir, sizeof(dir), "%s", filename);
-	for (char* p = dir; *p; ++p) if (*p == '\\') *p = '/';
-	char* slash = strrchr(dir, '/');
-	const char* name;
-	if (slash == NULL) { name = filename; dir[0] = '\0'; }
-	else { name = filename + (slash - dir) + 1; *slash = '\0'; if (dir[0] == '\0') strcpy(dir, "/"); }
-	if (name[0] == '\0') return (access(filename, F_OK) != -1);
-	const dir_cache_type* c = get_dir_cache(dir);
-	if (c == NULL) return (access(filename, F_OK) != -1);
-	for (int i = 0; i < c->count; ++i) {
-		if (strcasecmp(c->names[i], name) == 0) return true;
-	}
-	return false;
-}
-#else
 bool file_exists(const char* filename) {
 	return (access(filename, F_OK) != -1);
-}
-#endif
-
-// The size of an open file (fstat looks the file up by name again on MS-DOS: slow).
-static long open_file_size(FILE* fp) {
-	long here = ftell(fp);
-	if (here < 0 || fseek(fp, 0, SEEK_END) != 0) return -1;
-	long size = ftell(fp);
-	fseek(fp, here, SEEK_SET);
-	return size;
-}
-
-// fopen, but without asking the system about files known not to be there.
-static FILE* fopen_existing(const char* filename, const char* mode) {
-	return file_exists(filename) ? fopen(filename, mode) : NULL;
 }
 
 const char* find_first_file_match(char* dst, int size, char* format, const char* filename) {
@@ -2338,18 +2246,16 @@ sound_buffer_type* load_sound(int index) {
 				}
 				if (fp == NULL && !skip_normal_data_files) {
 					snprintf_check(filename, sizeof(filename), "data/music/%s.ogg", sound_name(index));
-					fp = fopen_existing(locate_file(filename), "rb");
+					fp = fopen(locate_file(filename), "rb");
 				}
 				if (fp == NULL) {
 					break;
 				}
 				// Read the entire file (undecoded) into memory.
-				long size_or_error = open_file_size(fp);
-				if (size_or_error < 0) {
-					fclose(fp);
+				struct stat info;
+				if (fstat(fileno(fp), &info))
 					break;
-				}
-				size_t file_size = (size_t) size_or_error;
+				size_t file_size = (size_t) MAX(0, info.st_size);
 				byte* file_contents = malloc(file_size);
 				if (fread(file_contents, 1, file_size, fp) != file_size) {
 					free(file_contents);
@@ -3005,7 +2911,7 @@ void load_from_opendats_metadata(int resource_id, const char* extension, FILE** 
 			snprintf_check(image_filename,sizeof(image_filename),"data/%s/res%d.%s",filename_no_ext, resource_id, extension);
 			if (!use_custom_levelset) {
 				//printf("loading (binary) %s",image_filename);
-				fp = fopen_existing(locate_file(image_filename), "rb");
+				fp = fopen(locate_file(image_filename), "rb");
 			}
 			else {
 				if (!skip_mod_data_files) {
@@ -3013,20 +2919,20 @@ void load_from_opendats_metadata(int resource_id, const char* extension, FILE** 
 					// before checking data/, first try mods/MODNAME/data/
 					snprintf_check(image_filename_mod, sizeof(image_filename_mod), "%s/%s", mod_data_path, image_filename);
 					//printf("loading (binary) %s",image_filename_mod);
-					fp = fopen_existing(locate_file(image_filename_mod), "rb");
+					fp = fopen(locate_file(image_filename_mod), "rb");
 				}
 				if (fp == NULL && !skip_normal_data_files) {
-					fp = fopen_existing(locate_file(image_filename), "rb");
+					fp = fopen(locate_file(image_filename), "rb");
 				}
 			}
 
 			if (fp != NULL) {
-				long file_size = open_file_size(fp);
-				if (file_size >= 0) {
+				struct stat buf;
+				if (fstat(fileno(fp), &buf) == 0) {
 					*result = data_directory;
-					*size = (int)file_size;
+					*size = (int)buf.st_size;
 				} else {
-					printf("Cannot get the size: ");
+					printf("Cannot fstat: ");
 					perror(image_filename);
 					fclose(fp);
 					fp = NULL;

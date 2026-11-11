@@ -282,9 +282,7 @@ SDL_OBJS = $(addprefix $(BUILD)/sdl/,$(SDL_SRCS:.c=.o))
 
 $(BUILD)/sdl/%.o: $(SDL)/%.c
 	@mkdir -p $(dir $@)
-	$(CC_DOS) $(SDL_CFLAGS) -MMD -MP -c $< -o $@
-
--include $(SDL_OBJS:.o=.d)
+	$(CC_DOS) $(SDL_CFLAGS) -c $< -o $@
 
 $(SDL3_LIB): $(SDL_OBJS)
 	rm -f $@

@@ -336,25 +336,12 @@ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
         }
     }
 
-    // SDLPoP-DOS: IRQ 1 is no longer chained to the BIOS (core/dos/SDL_dos.c),
-    // so its keyboard buffer stays empty: no need to drain it on every pump
-    // (an INT 16h trip to real mode each time). Only if the hook had to chain.
-    if (device->internal->keyboard_interrupt_hook.chained) {
-        DOSVESA_DrainBIOSKeyboardBuffer();
-    }
-
-    // SDLPoP-DOS: the mouse driver is a trip to real mode (INT 33h); games pump
-    // events far more often than a mouse moves (SDLPoP: about every millisecond
-    // while it waits), so ask it at most 100 times a second.
-    static Uint64 last_mouse_poll;
-    const Uint64 now = SDL_GetTicksNS();
-    const bool poll_mouse = (now - last_mouse_poll) >= 10 * SDL_NS_PER_MS;
-    if (poll_mouse) {
-        last_mouse_poll = now;
-    }
+    // We chain IRQ1 to BIOS, so drain its keyboard queue continuously to prevent
+    // BIOS buffer overflow beeps during long key autorepeat.
+    DOSVESA_DrainBIOSKeyboardBuffer();
 
     SDL_Mouse *mouse = SDL_GetMouse();
-    if (poll_mouse && mouse->internal) { // if non-NULL, there's a mouse detected on the system.
+    if (mouse->internal) { // if non-NULL, there's a mouse detected on the system.
         __dpmi_regs regs;
 
         regs.x.ax = 0x3; // read mouse buttons and position.

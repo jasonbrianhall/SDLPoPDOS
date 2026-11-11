@@ -142,7 +142,6 @@ typedef struct DOS_InterruptHook
     int interrupt_vector; // this is the _vector_ number, not the IRQ number!
     _go32_dpmi_seginfo irq_handler_seginfo;
     _go32_dpmi_seginfo original_irq_handler_seginfo;
-    bool chained; // SDLPoP-DOS: false when installed with its own IRET wrapper
 
 } DOS_InterruptHook;
 
