@@ -1,0 +1,105 @@
+# Builds SDLPoP for MS-DOS and publishes it as a GitHub release.
+#
+# Release names come from the day (New York time): the first release of a day
+# is YYYY.MM.DD, later ones that day get a letter: YYYY.MM.DDa, YYYY.MM.DDb, ...
+# (after z: za, zb, ...).
+#
+# Runs on every push to main, and by hand from the Actions tab (Run workflow).
+
+name: DOS release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write          # create tags and releases
+
+# Two runs at once could pick the same release name; take them one by one.
+concurrency:
+  group: dos-release
+  cancel-in-progress: false
+
+env:
+  DJGPP_URL: https://github.com/andrewwutw/build-djgpp/releases/download/v3.4/djgpp-linux64-gcc1220.tar.bz2
+  TZ: America/New_York
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Cache DJGPP
+        id: djgpp-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/djgpp
+          key: djgpp-linux64-gcc1220
+
+      - name: Install DJGPP
+        if: steps.djgpp-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sSL "$DJGPP_URL" -o /tmp/djgpp.tar.bz2
+          sudo tar -xjf /tmp/djgpp.tar.bz2 -C /opt
+
+      - name: Tools
+        run: |
+          # The prebuilt DJGPP binutils need the flex runtime (libfl.so.2).
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libfl2 zip
+          echo "/opt/djgpp/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: |
+          i586-pc-msdosdjgpp-gcc --version | head -1
+          make -C msdos -j"$(nproc)" DOCKER=0
+          make -C msdos dist DOCKER=0
+
+      - name: Pick the release name
+        id: tag
+        run: |
+          base=$(date +%Y.%m.%d)
+          existing=$(git ls-remote --tags origin "refs/tags/${base}*" | sed 's|.*refs/tags/||; s|\^{}$||' | sort -u)
+          # "", a..z, za..zz, zza..zzz: the next one after the highest that exists.
+          suffixes=("" {a..z} z{a..z} zz{a..z})
+          next=0
+          for i in "${!suffixes[@]}"; do
+            if echo "$existing" | grep -qx "$base${suffixes[$i]}"; then next=$((i + 1)); fi
+          done
+          if [ "$next" -ge "${#suffixes[@]}" ]; then
+            echo "No release name left for $base" >&2
+            exit 1
+          fi
+          tag="$base${suffixes[$next]}"
+          echo "Release: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Package
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          cd msdos/build/dist
+          zip -q -r "$GITHUB_WORKSPACE/SDLPoP-DOS-$tag.zip" PRINCE
+          cp PRINCE/PRINCE.EXE "$GITHUB_WORKSPACE/PRINCE.EXE"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          cat > notes.md <<EOF
+          SDLPoP for MS-DOS, built from ${GITHUB_SHA::7} on $(date '+%Y-%m-%d %H:%M %Z').
+
+          **SDLPoP-DOS-$tag.zip** -- the game folder: unzip it, then run \`PRINCE\\PRINCE.EXE\`
+          (CWSDPMI is built in). Needs a 486DX or better, VGA (VESA for hicolor), optionally a
+          Sound Blaster (\`SET BLASTER=...\`). See README.TXT inside.
+
+          **PRINCE.EXE** -- just the program, to update an existing install.
+          EOF
+          gh release create "$tag" \
+            "SDLPoP-DOS-$tag.zip" PRINCE.EXE \
+            --target "$GITHUB_SHA" \
+            --title "SDLPoP for DOS $tag" \
+            --notes-file notes.md
