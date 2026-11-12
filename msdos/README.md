@@ -39,10 +39,11 @@ Requirements:
 Video modes
 -----------
 
-By default the game picks 320x200 in the most colours the card offers (the
-game's own resolution, so no scaling), then the smallest larger hicolor mode
-(640x400, 640x480, ...; the picture is doubled and centred), and if there is
-no VESA hicolor mode at all, VGA mode 13h.
+By default the game picks the smallest hicolor (VESA) mode of at least
+640x400 -- 640x400 or 640x480 -- and draws the picture doubled, with sharp
+pixels; a 320x200 mode would be stretched (and blurred) by the monitor. If the
+card has none, 320x200 in hicolor, and if there is no VESA hicolor mode at all,
+VGA mode 13h.
 
 In mode 13h each frame gets its own 256-colour palette. The game rarely shows
 more than 256 colours at once, so this is usually exact; with lighting on, or
@@ -51,7 +52,7 @@ under the translucent menu, the most used 256 colours are kept.
 To choose, set PRINCE_VIDEO to WIDTHxHEIGHTxBITS before starting:
 
     SET PRINCE_VIDEO=320x200x8      VGA mode 13h (fastest on old machines)
-    SET PRINCE_VIDEO=320x200x16     VESA 320x200, 65536 colours
+    SET PRINCE_VIDEO=320x200x16     VESA 320x200, 65536 colours (least to copy)
     SET PRINCE_VIDEO=640x480x16     VESA 640x480, picture doubled
     SET PRINCE_VIDEO=640x480x32
 

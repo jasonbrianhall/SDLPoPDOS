@@ -33,9 +33,9 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *     rest map to the nearest of those.
  *
  * Which mode: the PRINCE_VIDEO environment variable (e.g. SET PRINCE_VIDEO=
- * 640x480x16, or 320x200x8 for mode 13h), otherwise 320x200 in the most
- * colours the card has, otherwise the smallest larger hicolor mode,
- * otherwise mode 13h.
+ * 320x200x16, or 320x200x8 for mode 13h), otherwise the smallest hicolor mode
+ * of at least 640x400 (the picture doubled, sharp), otherwise 320x200 in
+ * hicolor, otherwise mode 13h.
  */
 #ifdef __DJGPP__
 
@@ -80,8 +80,12 @@ static const SDL_DisplayMode* dos_pick_mode(void) {
 			if (want_bpp != 0 && bpp == want_bpp) score += 50000;
 			if (want_bpp == 0 && !indexed) score += 1000 + bpp_rank(m->format);
 		} else {
-			// Hicolor first, then the smallest picture (least to copy), then the most colours.
+			// Hicolor first; then a mode the picture fits twice over (640x400, 640x480):
+			// the game doubles its pixels itself, sharp. Shown at 320x200, the monitor
+			// (or QEMU's window) stretches the picture and blurs it. Then the smallest
+			// such picture (least to copy), then the most colours.
 			score = indexed ? 0 : 1000000;
+			if (!indexed && m->w >= 640 && m->h >= 400) score += 200000;
 			score += 100000 - ((long)m->w * m->h) / 16;
 			score += bpp_rank(m->format);
 		}
