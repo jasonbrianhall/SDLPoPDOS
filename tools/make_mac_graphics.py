@@ -60,7 +60,8 @@ SEARCHED = {700}           # swords: the Mac uses its own offset tables
 # Flames, potions, bubbles: always where the Mac game puts them (their origins). Matched one by
 # one against the DOS pictures, animation frames would jump around, and potion jars would reach
 # into the next tile (which is not redrawn when the potion is taken).
-ORIGIN_ONLY = {150}
+# The hourglass (bank 960) too: its falling sand is too small to match its 2x8 DOS picture.
+ORIGIN_ONLY = {150, 960}
 # Torch flames: all frames share one box and one origin, which puts the flame's base where
 # the DOS flame's base is. Their black background (the game draws them opaque) is made
 # transparent, for the princess room.
