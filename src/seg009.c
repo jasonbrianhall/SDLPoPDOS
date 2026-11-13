@@ -440,6 +440,24 @@ void restore_stuff() {
 // seg009:0E33
 int key_test_quit() {
 	word key = read_key();
+	if (key == (SDL_SCANCODE_M | WITH_CTRL)) { // Ctrl+M: switch between the DOS and the Macintosh graphics
+		const char* text;
+		if (!use_mac_graphics && !mac_graphics_available()) {
+			text = "NO MACINTOSH GRAPHICS";
+		} else {
+			set_mac_graphics(!use_mac_graphics);
+			text = use_mac_graphics ? "MACINTOSH GRAPHICS" : "DOS GRAPHICS";
+#ifdef USE_MENU
+			save_ingame_settings();
+#endif
+		}
+		if (start_level >= 0 && !is_cutscene && !is_ending_sequence) { // in the game
+			display_text_bottom(text);
+			text_time_total = 24;
+			text_time_remaining = 24;
+		}
+		return 0;
+	}
 	if (key == (SDL_SCANCODE_Q | WITH_CTRL)) { // Ctrl+Q
 
 		#ifdef USE_REPLAY
@@ -618,6 +636,191 @@ void set_loaded_palette(dat_pal_type* palette_ptr) {
 // data:3356
 word chtab_palette_bits = 1;
 
+// Macintosh graphics (use_mac_graphics).
+// tools/make_mac_graphics.py makes them from the player's own Macintosh copy: data/MAC/<DAT name>/resNNN.png,
+// and data/MAC/<DAT name>/OFFSETS.TXT with lines "id x y": where that picture goes, in Macintosh pixels
+// (twice the DOS ones), relative to the top-left corner of the DOS picture it replaces. The DOS pictures
+// stay loaded and the game logic (collisions, positions) keeps using their sizes; only the drawing uses
+// the Macintosh pictures, at their own resolution (see gfx_scale).
+#define MAC_GUARD_FIRST 105 // palette slots of the guard color tables
+#define MAC_GUARD_COUNT 13
+static SDL_Color mac_guard_colors[8][MAC_GUARD_COUNT];
+static bool mac_guard_colors_loaded;
+
+static void load_mac_guard_colors(const char* folder) {
+	char path[POP_MAX_PATH];
+	snprintf_check(path, sizeof(path), "data/MAC/%s/COLORS.TXT", folder);
+	FILE* fp = fopen_existing(locate_file(path), "r");
+	if (fp == NULL) return;
+	char line[512];
+	while (fgets(line, sizeof(line), fp)) {
+		char* p = line;
+		int n, used;
+		if (line[0] == ';' || sscanf(p, "%d%n", &n, &used) != 1 || n < 0 || n >= 8) continue;
+		p += used;
+		for (int i = 0; i < MAC_GUARD_COUNT; ++i) {
+			int r, g, b;
+			if (sscanf(p, "%d %d %d%n", &r, &g, &b, &used) != 3) break;
+			p += used;
+			mac_guard_colors[n][i] = (SDL_Color){r, g, b, SDL_ALPHA_OPAQUE};
+		}
+	}
+	fclose(fp);
+	mac_guard_colors_loaded = true;
+}
+
+static void load_mac_images(chtab_type* chtab) {
+	if (chtab == NULL || chtab->mac_loaded) return;
+	chtab->mac_loaded = 1;
+	int resource = chtab->resource;
+	// Look in the folders of the DAT files that were open, like load_from_opendats_metadata() does.
+	for (int name_index = 0; name_index < 4 && chtab->dat_names[name_index][0] != '\0'; ++name_index) {
+		const char* folder = chtab->dat_names[name_index];
+		char path[POP_MAX_PATH];
+		snprintf_check(path, sizeof(path), "data/MAC/%s/OFFSETS.TXT", folder);
+		FILE* fp = fopen_existing(locate_file(path), "r");
+		if (fp == NULL) continue;
+		char line[64];
+		int id, x, y;
+		while (fgets(line, sizeof(line), fp)) {
+			if (line[0] == ';' || sscanf(line, "%d %d %d", &id, &x, &y) != 3) continue;
+			int index = id - resource - 1;
+			if (index < 0 || index >= chtab->n_images || chtab->images[index] == NULL) continue;
+			if (chtab->mac_images != NULL && chtab->mac_images[index] != NULL) continue; // found in an earlier folder
+			snprintf_check(path, sizeof(path), "data/MAC/%s/res%d.png", folder, id);
+			const char* located = locate_file(path);
+			if (!file_exists(located)) continue;
+			image_type* image = IMG_Load(located);
+			if (image == NULL) {
+				printf("load_mac_images: %s: %s\n", path, IMG_GetError());
+				continue;
+			}
+			SDL_SetColorKey(image, SDL_TRUE, 0);
+			set_surface_scale(image, 2);
+			set_surface_offset(image, x, y);
+			if (chtab->mac_images == NULL) {
+				chtab->mac_images = calloc(chtab->n_images, sizeof(image_type*));
+				if (chtab->mac_images == NULL) {
+					SDL_FreeSurface(image);
+					break;
+				}
+			}
+			chtab->mac_images[index] = image;
+		}
+		fclose(fp);
+		if (chtab->mac_images != NULL && strcasecmp(folder, "GUARD") == 0) {
+			if (!mac_guard_colors_loaded) load_mac_guard_colors(folder);
+			chtab->mac_guard_colors = mac_guard_colors_loaded;
+		}
+	}
+}
+
+// The picture to draw for image `index` of `chtab`: its Macintosh replacement if there is one (and
+// use_mac_graphics is on), otherwise the DOS image. Drawn at the DOS image's place: a Macintosh picture
+// carries its own offset from there.
+image_type* get_drawn_image(chtab_type* chtab, int index) {
+	if (chtab == NULL || index < 0 || index >= chtab->n_images) return NULL;
+	image_type* image = chtab->images[index];
+	if (!use_mac_graphics || chtab->mac_images == NULL || image == NULL) return image;
+	image_type* mac_image = chtab->mac_images[index];
+	return mac_image != NULL ? mac_image : image;
+}
+
+// A mirrored copy of `drawn` (see get_drawn_image()) for the DOS image `dos_image`:
+// the offset is mirrored around the DOS image too.
+image_type* hflip_drawn_image(image_type* drawn, image_type* dos_image) {
+	image_type* flipped = hflip(drawn);
+	copy_surface_scale(flipped, drawn);
+	if (drawn != dos_image) {
+		int scale = surface_scale(drawn);
+		int ox, oy;
+		get_surface_offset(drawn, &ox, &oy);
+		set_surface_offset(flipped, dos_image->w * scale - ox - drawn->w, oy);
+	}
+	return flipped;
+}
+
+// Are the Macintosh graphics there (data/MAC)?
+bool mac_graphics_available(void) {
+	return file_exists(locate_file("data/MAC/KID/OFFSETS.TXT"));
+}
+
+extern word need_redraw_because_flipped; // seg000.c
+extern SDL_Surface* onscreen_surface_2x;
+void init_scaling(void);
+
+// A copy of a screen surface at another scale, with the same picture.
+static SDL_Surface* rescale_surface(SDL_Surface* old_surface, int scale) {
+	if (old_surface == NULL) return NULL;
+	int old_scale = surface_scale(old_surface);
+	if (old_scale == scale) return old_surface;
+	SDL_Surface* surface = SDL_CreateSurface(old_surface->w / old_scale * scale, old_surface->h / old_scale * scale, old_surface->format);
+	if (surface == NULL) return old_surface;
+	SDL_BlendMode blend_mode = SDL_BLENDMODE_NONE;
+	SDL_GetSurfaceBlendMode(old_surface, &blend_mode);
+	SDL_SetSurfaceBlendMode(old_surface, SDL_BLENDMODE_NONE);
+	SDL_SetSurfaceColorKey(old_surface, false, 0);
+	SDL_BlitSurfaceScaled(old_surface, NULL, surface, NULL, SDL_SCALEMODE_NEAREST);
+	SDL_SetSurfaceBlendMode(surface, blend_mode);
+	set_surface_scale(surface, scale);
+	SDL_DestroySurface(old_surface);
+	return surface;
+}
+
+// Remake the screen surfaces for another gfx_scale, keeping what they show.
+static void set_gfx_scale(int scale) {
+	if (scale == gfx_scale || onscreen_surface_ == NULL) return;
+	SDL_Surface* old_onscreen = onscreen_surface_;
+	SDL_Surface* old_offscreen = offscreen_surface;
+	onscreen_surface_ = rescale_surface(onscreen_surface_, scale);
+	offscreen_surface = rescale_surface(offscreen_surface, scale);
+	merged_surface = rescale_surface(merged_surface, scale);
+	if (current_target_surface == old_onscreen) current_target_surface = onscreen_surface_;
+	else if (current_target_surface == old_offscreen && old_offscreen != NULL) current_target_surface = offscreen_surface;
+	gfx_scale = scale;
+#ifdef USE_LIGHTING
+	rescale_lighting();
+#endif
+	// The textures have the size of the picture: make them again.
+	SDL_Texture** textures[] = {&texture_sharp, &texture_fuzzy, &texture_blurry};
+	for (int i = 0; i < 3; ++i) {
+		if (*textures[i] != NULL) SDL_DestroyTexture(*textures[i]);
+		*textures[i] = NULL;
+	}
+	target_texture = NULL;
+	if (onscreen_surface_2x != NULL) {
+		SDL_DestroySurface(onscreen_surface_2x);
+		onscreen_surface_2x = NULL;
+	}
+	init_scaling();
+}
+
+// Switch between the DOS and the Macintosh graphics, right away.
+void set_mac_graphics(bool on) {
+	use_mac_graphics = on;
+	if (on) {
+		for (int i = 0; i < 10; ++i) load_mac_images(chtab_addrs[i]);
+		load_mac_images(chtab_title40);
+		load_mac_images(chtab_title50);
+		if (curr_guard_color) set_mac_guard_color(chtab_addrs[id_chtab_5_guard], curr_guard_color);
+	}
+	set_gfx_scale(on ? 2 : 1);
+	need_redraw_because_flipped = 1; // redraw the room (in the game)
+}
+
+// Recolor the Macintosh guard pictures with the Macintosh color table of guard color `guard_color`.
+void set_mac_guard_color(chtab_type* chtab, int guard_color) {
+	if (chtab == NULL || chtab->mac_images == NULL || !chtab->mac_guard_colors) return;
+	if (guard_color < 0 || guard_color >= 8) guard_color = 0;
+	for (int i = 0; i < chtab->n_images; ++i) {
+		image_type* image = chtab->mac_images[i];
+		if (image == NULL) continue;
+		SDL_Palette* palette = SURFACE_PALETTE(image);
+		if (palette == NULL || palette->ncolors < MAC_GUARD_FIRST + MAC_GUARD_COUNT) continue;
+		SDL_SetPaletteColors(palette, mac_guard_colors[guard_color], MAC_GUARD_FIRST, MAC_GUARD_COUNT);
+	}
+}
+
 // seg009:104E
 chtab_type* load_sprites_from_file(int resource,int palette_bits, int quit_on_error) {
 	//int has_palette_bits = 1;
@@ -676,6 +879,18 @@ chtab_type* load_sprites_from_file(int resource,int palette_bits, int quit_on_er
 //		printf("\n");
 		chtab->images[i-1] = image;
 	}
+	// Remember where the images came from, for the Macintosh replacements (loaded when first needed).
+	chtab->resource = (short)resource;
+	int n_names = 0;
+	for (dat_type* pointer = dat_chain_ptr; pointer != NULL && n_names < 4; pointer = pointer->next_dat) {
+		size_t length = strnlen(pointer->filename, sizeof(chtab->dat_names[0]) - 1); // DAT names are short
+		memcpy(chtab->dat_names[n_names], pointer->filename, length);
+		chtab->dat_names[n_names][length] = '\0';
+		char* dot = strrchr(chtab->dat_names[n_names], '.');
+		if (dot != NULL) *dot = '\0'; // strip ".DAT"
+		++n_names;
+	}
+	if (use_mac_graphics) load_mac_images(chtab);
 	set_loaded_palette(pal_ptr);
 	return chtab;
 }
@@ -692,7 +907,11 @@ void free_chtab(chtab_type *chtab_ptr) {
 		if (curr_image) {
 			SDL_FreeSurface(curr_image);
 		}
+		if (chtab_ptr->mac_images != NULL && chtab_ptr->mac_images[id] != NULL) {
+			SDL_FreeSurface(chtab_ptr->mac_images[id]);
+		}
 	}
+	free(chtab_ptr->mac_images);
 	free(chtab_ptr);
 }
 
@@ -1083,11 +1302,12 @@ surface_type* make_offscreen_buffer(const rect_type* rect) {
 	// stub
 #ifndef USE_ALPHA
 	// Bit order matches onscreen buffer, good for fading.
-	return SDL_CreateRGBSurface(0, rect->right, rect->bottom, 24, Rmsk, Gmsk, Bmsk, 0);
+	SDL_Surface* surface = SDL_CreateRGBSurface(0, rect->right * gfx_scale, rect->bottom * gfx_scale, 24, Rmsk, Gmsk, Bmsk, 0);
 #else
-	return SDL_CreateRGBSurface(0, rect->right, rect->bottom, 32, Rmsk, Gmsk, Bmsk, Amsk);
+	SDL_Surface* surface = SDL_CreateRGBSurface(0, rect->right * gfx_scale, rect->bottom * gfx_scale, 32, Rmsk, Gmsk, Bmsk, Amsk);
 #endif
-	//return surface;
+	if (gfx_scale != 1) set_surface_scale(surface, gfx_scale);
+	return surface;
 }
 
 // seg009:17BD
@@ -1290,7 +1510,7 @@ font_type load_font_from_data(/*const*/ rawfont_type* data) {
 	if (SDL_SwapLE16(data->offsets[0]) == 0) {
 		load_font_character_offsets(data);
 	}
-	chtab_type* chtab = malloc(sizeof(chtab_type) + sizeof(image_type*) * n_chars);
+	chtab_type* chtab = calloc(1, sizeof(chtab_type) + sizeof(image_type*) * n_chars);
 	// Make a dummy palette for decode_image().
 	dat_pal_type dat_pal;
 	memset(&dat_pal, 0, sizeof(dat_pal));
@@ -1893,12 +2113,14 @@ peel_type* read_peel_from_screen(const rect_type* rect) {
 	peel_type* result = calloc(1, sizeof(peel_type));
 	//memset(&result, 0, sizeof(result));
 	result->rect = *rect;
+	int scale = surface_scale(current_target_surface);
 #ifndef USE_ALPHA
-	SDL_Surface* peel_surface = SDL_CreateRGBSurface(0, rect->right - rect->left, rect->bottom - rect->top,
+	SDL_Surface* peel_surface = SDL_CreateRGBSurface(0, (rect->right - rect->left) * scale, (rect->bottom - rect->top) * scale,
 	                                                 24, Rmsk, Gmsk, Bmsk, 0);
 #else
-	SDL_Surface* peel_surface = SDL_CreateRGBSurface(0, rect->right - rect->left, rect->bottom - rect->top, 32, Rmsk, Gmsk, Bmsk, Amsk);
+	SDL_Surface* peel_surface = SDL_CreateRGBSurface(0, (rect->right - rect->left) * scale, (rect->bottom - rect->top) * scale, 32, Rmsk, Gmsk, Bmsk, Amsk);
 #endif
+	if (peel_surface != NULL && scale != 1) set_surface_scale(peel_surface, scale);
 	if (peel_surface == NULL) {
 		sdlperror("read_peel_from_screen: SDL_CreateRGBSurface");
 		quit(1);
@@ -2604,8 +2826,9 @@ void window_resized() {
 void init_overlay(void) {
 	static bool initialized = false;
 	if (!initialized) {
-		overlay_surface = SDL_CreateRGBSurface(0, 320, 200, 32, Rmsk, Gmsk, Bmsk, Amsk);
-		merged_surface = SDL_CreateRGBSurface(0, 320, 200, 24, Rmsk, Gmsk, Bmsk, 0);
+		overlay_surface = SDL_CreateRGBSurface(0, 320, 200, 32, Rmsk, Gmsk, Bmsk, Amsk); // menu and timers: always 320x200
+		merged_surface = SDL_CreateRGBSurface(0, 320 * gfx_scale, 200 * gfx_scale, 24, Rmsk, Gmsk, Bmsk, 0);
+		if (gfx_scale != 1) set_surface_scale(merged_surface, gfx_scale);
 		initialized = true;
 	}
 }
@@ -2617,7 +2840,7 @@ void init_scaling(void) {
 	if (renderer_ == NULL) return;
 
 	if (texture_sharp == NULL) {
-		texture_sharp = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, 320, 200);
+		texture_sharp = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, 320 * gfx_scale, 200 * gfx_scale);
 		SDL_SetTextureScaleMode(texture_sharp, SDL_SCALEMODE_NEAREST); // SDL3 filters textures by default
 	}
 	if (scaling_type == 1) {
@@ -2625,13 +2848,13 @@ void init_scaling(void) {
 #ifdef __amigaos4__
 			overlay_surface = SDL_CreateRGBSurface(0, 320*2, 200*2, 24, Rmsk, Gmsk, Bmsk, 0);
 #else
-			onscreen_surface_2x = SDL_CreateRGBSurface(0, 320*2, 200*2, 24, Rmsk, Gmsk, Bmsk, 0);
+			onscreen_surface_2x = SDL_CreateRGBSurface(0, 320*2*gfx_scale, 200*2*gfx_scale, 24, Rmsk, Gmsk, Bmsk, 0);
 #endif
 		}
 		if (texture_fuzzy == NULL) {
 			SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
 			int access = is_renderer_targettexture_supported ? SDL_TEXTUREACCESS_TARGET : SDL_TEXTUREACCESS_STREAMING;
-			texture_fuzzy = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB24, access, 320*2, 200*2);
+			texture_fuzzy = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB24, access, 320*2*gfx_scale, 200*2*gfx_scale);
 			SDL_SetTextureScaleMode(texture_fuzzy, SDL_SCALEMODE_LINEAR);
 			SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
 		}
@@ -2639,7 +2862,7 @@ void init_scaling(void) {
 	} else if (scaling_type == 2) {
 		if (texture_blurry == NULL) {
 			SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
-			texture_blurry = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, 320, 200);
+			texture_blurry = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, 320 * gfx_scale, 200 * gfx_scale);
 			SDL_SetTextureScaleMode(texture_blurry, SDL_SCALEMODE_LINEAR);
 			SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
 		}
@@ -2746,11 +2969,14 @@ void set_gr_mode(byte grmode) {
 	 * subsequently displayed.
 	 * The function handling the screen updates is update_screen()
 	 * */
-	onscreen_surface_ = SDL_CreateRGBSurface(0, 320, 200, 24, Rmsk, Gmsk, Bmsk, 0);
+	// Macintosh graphics are drawn at their own resolution, twice that of DOS.
+	gfx_scale = use_mac_graphics ? 2 : 1;
+	onscreen_surface_ = SDL_CreateRGBSurface(0, 320 * gfx_scale, 200 * gfx_scale, 24, Rmsk, Gmsk, Bmsk, 0);
 	if (onscreen_surface_ == NULL) {
 		sdlperror("set_gr_mode: SDL_CreateRGBSurface");
 		quit(1);
 	}
+	if (gfx_scale != 1) set_surface_scale(onscreen_surface_, gfx_scale);
 	init_overlay();
 	init_scaling();
 	if (start_fullscreen) {
@@ -2860,7 +3086,7 @@ void draw_overlay(void) {
 		SDL_Rect sdl_rect;
 		rect_to_sdlrect(&drawn_rect, &sdl_rect);
 		SDL_BlitSurface(onscreen_surface_, NULL, merged_surface, NULL);
-		SDL_BlitSurface(overlay_surface, &sdl_rect, merged_surface, &sdl_rect);
+		blit_logical(overlay_surface, &sdl_rect, merged_surface, &sdl_rect);
 		current_target_surface = saved_target_surface;
 	}
 }
@@ -3119,11 +3345,161 @@ void rect_to_sdlrect(const rect_type* rect, SDL_Rect* sdlrect) {
 	sdlrect->h = rect->bottom - rect->top;
 }
 
+// High-resolution drawing (use_mac_graphics).
+// The screen surfaces are gfx_scale times as big as the 320x200 game screen. The game keeps working
+// in 320x200 coordinates; the drawing functions convert them. Each surface knows its own scale
+// (a property; 1 if not set): DOS sprites are 1, the screen surfaces and the Macintosh sprites are
+// gfx_scale. A sprite drawn onto a surface of a bigger scale is drawn from a pixel-doubled copy
+// (kept with the sprite; an indexed copy shares the sprite's palette, so palette changes still work).
+// A Macintosh sprite also has an offset, in its own pixels, from where the DOS image it replaces goes.
+#define PROP_SCALE    "SDLPoP.scale"
+#define PROP_OFFSET_X "SDLPoP.offset_x"
+#define PROP_OFFSET_Y "SDLPoP.offset_y"
+#define PROP_SCALED   "SDLPoP.scaled"
+
+int surface_scale(SDL_Surface* surface) {
+	if (surface == NULL) return 1;
+	SDL_PropertiesID props = SDL_GetSurfaceProperties(surface);
+	return props ? (int)SDL_GetNumberProperty(props, PROP_SCALE, 1) : 1;
+}
+
+void set_surface_scale(SDL_Surface* surface, int scale) {
+	if (surface == NULL) return;
+	SDL_SetNumberProperty(SDL_GetSurfaceProperties(surface), PROP_SCALE, scale);
+}
+
+void set_surface_offset(SDL_Surface* surface, int x, int y) {
+	if (surface == NULL) return;
+	SDL_PropertiesID props = SDL_GetSurfaceProperties(surface);
+	SDL_SetNumberProperty(props, PROP_OFFSET_X, x);
+	SDL_SetNumberProperty(props, PROP_OFFSET_Y, y);
+}
+
+void get_surface_offset(SDL_Surface* surface, int* x, int* y) {
+	SDL_PropertiesID props = surface ? SDL_GetSurfaceProperties(surface) : 0;
+	*x = props ? (int)SDL_GetNumberProperty(props, PROP_OFFSET_X, 0) : 0;
+	*y = props ? (int)SDL_GetNumberProperty(props, PROP_OFFSET_Y, 0) : 0;
+}
+
+// Copy the scale and the offset (SDL_ConvertSurface and the like do not keep them).
+void copy_surface_scale(SDL_Surface* target, SDL_Surface* source) {
+	int scale = surface_scale(source);
+	if (scale != 1 || surface_scale(target) != 1) set_surface_scale(target, scale);
+	int x, y;
+	get_surface_offset(source, &x, &y);
+	if (x != 0 || y != 0) set_surface_offset(target, x, y);
+}
+
+// The 320x200 rectangle that `image` covers when drawn at (xpos, ypos).
+void image_logical_rect(image_type* image, int xpos, int ypos, rect_type* rect) {
+	int scale = surface_scale(image);
+	int ox, oy;
+	get_surface_offset(image, &ox, &oy);
+	// Round outwards.
+	int left = ox >= 0 ? ox / scale : -((-ox + scale - 1) / scale);
+	int top  = oy >= 0 ? oy / scale : -((-oy + scale - 1) / scale);
+	rect->left   = xpos + left;
+	rect->top    = ypos + top;
+	rect->right  = xpos + (ox + image->w + scale - 1) / scale;
+	rect->bottom = ypos + (oy + image->h + scale - 1) / scale;
+}
+
+// A rectangle in 320x200 coordinates -> pixels of a surface.
+static void logical_to_pixels(const SDL_Rect* logical, SDL_Rect* pixels, int scale) {
+	pixels->x = logical->x * scale;
+	pixels->y = logical->y * scale;
+	pixels->w = logical->w * scale;
+	pixels->h = logical->h * scale;
+}
+
+static void free_scaled_copy(void* userdata, void* value) {
+	(void)userdata;
+	SDL_DestroySurface((SDL_Surface*)value);
+}
+
+// `image` as it should be drawn onto a surface of the given scale.
+static SDL_Surface* image_at_scale(SDL_Surface* image, int scale) {
+	int own_scale = surface_scale(image);
+	if (image == NULL || own_scale >= scale || scale % own_scale != 0) return image;
+	int factor = scale / own_scale;
+	SDL_PropertiesID props = SDL_GetSurfaceProperties(image);
+	SDL_Surface* copy = (SDL_Surface*)SDL_GetPointerProperty(props, PROP_SCALED, NULL);
+	if (copy != NULL && copy->w == image->w * factor && copy->h == image->h * factor) return copy;
+
+	if (image->format == SDL_PIXELFORMAT_INDEX8) {
+		copy = SDL_CreateSurface(image->w * factor, image->h * factor, SDL_PIXELFORMAT_INDEX8);
+		if (copy == NULL) return image;
+		SDL_SetSurfacePalette(copy, SDL_GetSurfacePalette(image)); // shared: palette changes apply to both
+		SDL_LockSurface(image);
+		for (int y = 0; y < copy->h; ++y) {
+			const Uint8* source = (const Uint8*)image->pixels + (y / factor) * image->pitch;
+			Uint8* target = (Uint8*)copy->pixels + y * copy->pitch;
+			for (int x = 0; x < copy->w; ++x) target[x] = source[x / factor];
+		}
+		SDL_UnlockSurface(image);
+	} else {
+		SDL_Surface* rgba = SDL_ConvertSurface(image, SDL_PIXELFORMAT_ARGB8888);
+		if (rgba == NULL) return image;
+		copy = SDL_ScaleSurface(rgba, image->w * factor, image->h * factor, SDL_SCALEMODE_NEAREST);
+		SDL_DestroySurface(rgba);
+		if (copy == NULL) return image;
+	}
+	Uint32 key;
+	if (SDL_GetSurfaceColorKey(image, &key)) SDL_SetSurfaceColorKey(copy, true, key);
+	set_surface_scale(copy, scale);
+	int ox, oy;
+	get_surface_offset(image, &ox, &oy);
+	if (ox != 0 || oy != 0) set_surface_offset(copy, ox * factor, oy * factor);
+	// Kept with the image, and freed with it.
+	SDL_SetPointerPropertyWithCleanup(props, PROP_SCALED, copy, free_scaled_copy, NULL);
+	return copy;
+}
+
+// Blit between pixel rectangles, scaling (nearest) if their sizes differ.
+static bool blit_pixels(SDL_Surface* source, const SDL_Rect* source_rect, SDL_Surface* target, SDL_Rect* target_rect) {
+	if (source_rect->w == target_rect->w && source_rect->h == target_rect->h) {
+		return SDL_BlitSurface(source, source_rect, target, target_rect) == 0;
+	}
+	return SDL_BlitSurfaceScaled(source, source_rect, target, target_rect, SDL_SCALEMODE_NEAREST);
+}
+
+// Where `image` (as returned by image_at_scale) goes, in pixels of a surface of the given scale,
+// when drawn at (xpos, ypos).
+static void image_target_rect(SDL_Surface* image, int xpos, int ypos, int scale, SDL_Rect* rect) {
+	int own_scale = surface_scale(image);
+	int ox, oy;
+	get_surface_offset(image, &ox, &oy);
+	rect->x = xpos * scale + ox * scale / own_scale;
+	rect->y = ypos * scale + oy * scale / own_scale;
+	rect->w = image->w * scale / own_scale;
+	rect->h = image->h * scale / own_scale;
+}
+
+// For code that blits a surface by itself: logical rectangles, any scales.
+bool blit_logical(SDL_Surface* source, const SDL_Rect* source_rect, SDL_Surface* target, const SDL_Rect* target_rect) {
+	SDL_Rect source_pixels, target_pixels;
+	if (source_rect) logical_to_pixels(source_rect, &source_pixels, surface_scale(source));
+	else source_pixels = (SDL_Rect){0, 0, source->w, source->h};
+	if (target_rect) logical_to_pixels(target_rect, &target_pixels, surface_scale(target));
+	else target_pixels = (SDL_Rect){0, 0, target->w, target->h};
+	if (target_rect) {
+		// Like SDL_BlitSurface, the size comes from the source; the target rectangle gives the place.
+		target_pixels.w = source_pixels.w * surface_scale(target) / surface_scale(source);
+		target_pixels.h = source_pixels.h * surface_scale(target) / surface_scale(source);
+	}
+	return blit_pixels(source, &source_pixels, target, &target_pixels);
+}
+
 void method_1_blit_rect(surface_type* target_surface,surface_type* source_surface,const rect_type* target_rect, const rect_type* source_rect,int blit) {
 	SDL_Rect src_rect;
 	rect_to_sdlrect(source_rect, &src_rect);
+	logical_to_pixels(&src_rect, &src_rect, surface_scale(source_surface));
 	SDL_Rect dest_rect;
 	rect_to_sdlrect(target_rect, &dest_rect);
+	logical_to_pixels(&dest_rect, &dest_rect, surface_scale(target_surface));
+	// Like SDL_BlitSurface, the size comes from the source (some callers pass only a position).
+	dest_rect.w = src_rect.w * surface_scale(target_surface) / surface_scale(source_surface);
+	dest_rect.h = src_rect.h * surface_scale(target_surface) / surface_scale(source_surface);
 
 	if (blit == blitters_0_no_transp) {
 		// Disable transparency.
@@ -3138,13 +3514,15 @@ void method_1_blit_rect(surface_type* target_surface,surface_type* source_surfac
 			quit(1);
 		}
 	}
-	if (SDL_BlitSurface(source_surface, &src_rect, target_surface, &dest_rect) != 0) {
+	if (!blit_pixels(source_surface, &src_rect, target_surface, &dest_rect)) {
 		sdlperror("method_1_blit_rect: SDL_BlitSurface");
 		quit(1);
 	}
 }
 
 image_type* method_3_blit_mono(image_type* image,int xpos,int ypos,int blitter,byte color) {
+	image_type* original_image = image;
+	image = image_at_scale(image, surface_scale(current_target_surface));
 	int w = image->w;
 	int h = image->h;
 	if (SDL_SetColorKey(image, SDL_TRUE, 0) != 0) {
@@ -3181,18 +3559,19 @@ image_type* method_3_blit_mono(image_type* image,int xpos,int ypos,int blitter,b
 	SDL_UnlockSurface(colored_image);
 
 	SDL_Rect src_rect = {0, 0, image->w, image->h};
-	SDL_Rect dest_rect = {xpos, ypos, image->w, image->h};
+	SDL_Rect dest_rect;
+	image_target_rect(image, xpos, ypos, surface_scale(current_target_surface), &dest_rect);
 
 	SDL_SetSurfaceBlendMode(colored_image, SDL_BLENDMODE_BLEND);
 	SDL_SetSurfaceBlendMode(current_target_surface, SDL_BLENDMODE_BLEND);
 	SDL_SetSurfaceAlphaMod(colored_image, 255);
-	if (SDL_BlitSurface(colored_image, &src_rect, current_target_surface, &dest_rect) != 0) {
+	if (!blit_pixels(colored_image, &src_rect, current_target_surface, &dest_rect)) {
 		sdlperror("method_3_blit_mono: SDL_BlitSurface");
 		quit(1);
 	}
 	SDL_FreeSurface(colored_image);
 
-	return image;
+	return original_image;
 }
 
 // Workaround for a bug in SDL2 (before v2.0.4):
@@ -3231,6 +3610,7 @@ int safe_SDL_FillRect(SDL_Surface* dst, const SDL_Rect* rect, Uint32 color) {
 const rect_type* method_5_rect(const rect_type* rect,int blit,byte color) {
 	SDL_Rect dest_rect;
 	rect_to_sdlrect(rect, &dest_rect);
+	logical_to_pixels(&dest_rect, &dest_rect, surface_scale(current_target_surface));
 	rgb_type palette_color = palette[color];
 #ifndef USE_ALPHA
 	uint32_t rgb_color = SDL_MapRGBA_S(current_target_surface, palette_color.r<<2, palette_color.g<<2, palette_color.b<<2, 0xFF);
@@ -3247,6 +3627,7 @@ const rect_type* method_5_rect(const rect_type* rect,int blit,byte color) {
 void draw_rect_with_alpha(const rect_type* rect, byte color, byte alpha) {
 	SDL_Rect dest_rect;
 	rect_to_sdlrect(rect, &dest_rect);
+	logical_to_pixels(&dest_rect, &dest_rect, surface_scale(current_target_surface));
 	rgb_type palette_color = palette[color];
 	uint32_t rgb_color = SDL_MapRGBA_S(overlay_surface, palette_color.r<<2, palette_color.g<<2, palette_color.b<<2, alpha);
 	if (safe_SDL_FillRect(current_target_surface, &dest_rect, rgb_color) != 0) {
@@ -3263,6 +3644,7 @@ void draw_rect_contours(const rect_type* rect, byte color) {
 	}
 	SDL_Rect dest_rect;
 	rect_to_sdlrect(rect, &dest_rect);
+	logical_to_pixels(&dest_rect, &dest_rect, surface_scale(current_target_surface));
 	rgb_type palette_color = palette[color];
 	uint32_t rgb_color = SDL_MapRGBA_S(overlay_surface, palette_color.r<<2, palette_color.g<<2, palette_color.b<<2, 0xFF);
 	if (SDL_LockSurface(current_target_surface) != 0) {
@@ -3352,6 +3734,7 @@ void draw_colored_torch(int color, SDL_Surface* image, int xpos, int ypos) {
 	}
 
 	SDL_Surface* colored_image = SDL_ConvertSurfaceFormat(image, SDL_PIXELFORMAT_ARGB8888, 0);
+	copy_surface_scale(colored_image, image);
 	SDL_SetSurfaceBlendMode(colored_image, SDL_BLENDMODE_NONE);
 
 	if (SDL_LockSurface(colored_image) != 0) {
@@ -3396,20 +3779,23 @@ image_type* method_6_blit_img_to_scr(image_type* image,int xpos,int ypos,int bli
 		return image;
 	}
 
-	SDL_Rect src_rect = {0, 0, image->w, image->h};
-	SDL_Rect dest_rect = {xpos, ypos, image->w, image->h};
-
-	if (blit == blitters_3_xor) {
-		blit_xor(current_target_surface, &dest_rect, image, &src_rect);
-		return image;
-	}
-
 #ifdef USE_COLORED_TORCHES
 	if (blit >= blitters_colored_flame && blit <= blitters_colored_flame_last) {
 		draw_colored_torch(blit - blitters_colored_flame, image, xpos, ypos);
 		return image;
 	}
 #endif
+
+	image_type* original_image = image;
+	image = image_at_scale(image, surface_scale(current_target_surface));
+	SDL_Rect src_rect = {0, 0, image->w, image->h};
+	SDL_Rect dest_rect;
+	image_target_rect(image, xpos, ypos, surface_scale(current_target_surface), &dest_rect);
+
+	if (blit == blitters_3_xor && dest_rect.w == src_rect.w && dest_rect.h == src_rect.h) {
+		blit_xor(current_target_surface, &dest_rect, image, &src_rect);
+		return original_image;
+	}
 
 	SDL_SetSurfaceBlendMode(image, SDL_BLENDMODE_NONE);
 	SDL_SetColorKey(image, SDL_FALSE, 0);
@@ -3436,7 +3822,7 @@ image_type* method_6_blit_img_to_scr(image_type* image,int xpos,int ypos,int bli
 			//printf("SDL_BLENDMODE_BLEND\n");
 		}
 	}
-	if (SDL_BlitSurface(image, &src_rect, current_target_surface, &dest_rect) != 0) {
+	if (!blit_pixels(image, &src_rect, current_target_surface, &dest_rect)) {
 		sdlperror("method_6_blit_img_to_scr: SDL_BlitSurface 2247");
 		//quit(1);
 	}
@@ -3446,7 +3832,7 @@ image_type* method_6_blit_img_to_scr(image_type* image,int xpos,int ypos,int bli
 		quit(1);
 	}
 */
-	return image;
+	return original_image;
 }
 
 #ifndef USE_COMPAT_TIMER
@@ -3931,6 +4317,7 @@ void init_timer(int frequency) {
 void set_clip_rect(const rect_type* rect) {
 	SDL_Rect clip_rect;
 	rect_to_sdlrect(rect, &clip_rect);
+	logical_to_pixels(&clip_rect, &clip_rect, surface_scale(current_target_surface));
 	SDL_SetClipRect(current_target_surface, &clip_rect);
 }
 

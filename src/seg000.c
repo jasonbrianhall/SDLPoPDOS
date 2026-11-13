@@ -1395,15 +1395,21 @@ void read_joyst_control() {
 
 }
 
+// An HP triangle (the Macintosh one with use_mac_graphics).
+static void draw_hp_image(int chtab_id, int index, int xpos, int blit) {
+	image_type* image = get_drawn_image(chtab_addrs[chtab_id], index);
+	if (image != NULL) method_6_blit_img_to_scr(image, xpos, 194, blit);
+}
+
 // seg000:10EA
 void draw_kid_hp(short curr_hp,short max_hp) {
 	for (short drawn_hp_index = curr_hp; drawn_hp_index < max_hp; ++drawn_hp_index) {
 		// empty HP
-		method_6_blit_img_to_scr(get_image(id_chtab_2_kid, 217), drawn_hp_index * 7, 194, blitters_0_no_transp);
+		draw_hp_image(id_chtab_2_kid, 217, drawn_hp_index * 7, blitters_0_no_transp);
 	}
 	for (short drawn_hp_index = 0; drawn_hp_index < curr_hp; ++drawn_hp_index) {
 		// full HP
-		method_6_blit_img_to_scr(get_image(id_chtab_2_kid, 216), drawn_hp_index * 7, 194, blitters_0_no_transp);
+		draw_hp_image(id_chtab_2_kid, 216, drawn_hp_index * 7, blitters_0_no_transp);
 	}
 }
 
@@ -1417,10 +1423,10 @@ void draw_guard_hp(short curr_hp,short max_hp) {
 		(guard_charid != charid_1_shadow || current_level == 12)
 	) {
 		for (short drawn_hp_index = curr_hp; drawn_hp_index < max_hp; ++drawn_hp_index) {
-			method_6_blit_img_to_scr(chtab_addrs[id_chtab_5_guard]->images[0], 314 - drawn_hp_index * 7, 194, blitters_9_black);
+			draw_hp_image(id_chtab_5_guard, 0, 314 - drawn_hp_index * 7, blitters_9_black);
 		}
 		for (short drawn_hp_index = 0; drawn_hp_index < curr_hp; ++drawn_hp_index) {
-			method_6_blit_img_to_scr(chtab_addrs[id_chtab_5_guard]->images[0], 314 - drawn_hp_index * 7, 194, blitters_0_no_transp);
+			draw_hp_image(id_chtab_5_guard, 0, 314 - drawn_hp_index * 7, blitters_0_no_transp);
 		}
 	}
 }
@@ -2106,6 +2112,19 @@ void draw_full_image(enum full_image_id id) {
 	int blit = full_image[id].blitter;
 	int xpos = full_image[id].xpos;
 	int ypos = full_image[id].ypos;
+	if (use_mac_graphics && decoded_image != NULL) {
+		image_type* dos_image = decoded_image;
+		decoded_image = get_drawn_image(*full_image[id].chtab, full_image[id].id);
+		rect_type covered;
+		image_logical_rect(decoded_image, xpos, ypos, &covered);
+		if (decoded_image != dos_image && blit == blitters_0_no_transp &&
+		    (covered.right - covered.left < dos_image->w || covered.bottom - covered.top < dos_image->h)) {
+			// The Macintosh picture does not cover all of the DOS one: clear the rest.
+			rect_type rect = {.top = full_image[id].ypos, .left = full_image[id].xpos,
+			                  .bottom = full_image[id].ypos + dos_image->h, .right = full_image[id].xpos + dos_image->w};
+			draw_rect(&rect, color_0_black);
+		}
+	}
 
 	switch (blit) {
 	case blitters_white:

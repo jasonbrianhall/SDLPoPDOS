@@ -195,6 +195,7 @@ static int global_ini_callback(const char *section, const char *name, const char
 		process_word("pop_window_height", &pop_window_height, NULL);
 		process_byte("use_hardware_acceleration", &use_hardware_acceleration, &use_hardware_acceleration_names_list);
 		process_boolean("use_correct_aspect_ratio", &use_correct_aspect_ratio);
+		process_boolean("use_mac_graphics", &use_mac_graphics);
 		process_boolean("use_integer_scaling", &use_integer_scaling);
 		process_byte("scaling_type", &scaling_type, &scaling_type_names_list);
 		process_boolean("enable_controller_rumble", &enable_controller_rumble);
@@ -481,6 +482,7 @@ void set_options_to_default() {
 	start_fullscreen = 0;
 	use_hardware_acceleration = 2;
 	use_correct_aspect_ratio = 0;
+	use_mac_graphics = 0;
 	use_integer_scaling = 0;
 	scaling_type = 0;
 	enable_controller_rumble = 1;

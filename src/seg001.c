@@ -507,7 +507,9 @@ void princess_room_torch() {
 	for (short which = 2; which--; ) {
 		which_torch = !which_torch;
 		princess_torch_frame[which_torch] = get_torch_frame(princess_torch_frame[which_torch]);
-		add_backtable(id_chtab_1_flameswordpotion, princess_torch_frame[which_torch] + 1, princess_torch_pos_xh[which_torch], princess_torch_pos_xl[which_torch], 116, 0, 0);
+		// The Macintosh flames are drawn over the Macintosh room, which is not black behind them.
+		add_backtable(id_chtab_1_flameswordpotion, princess_torch_frame[which_torch] + 1, princess_torch_pos_xh[which_torch], princess_torch_pos_xl[which_torch], 116,
+		              use_mac_graphics ? blitters_10h_transp : blitters_0_no_transp, 0);
 	}
 }
 
@@ -663,8 +665,10 @@ void load_intro(int which_imgs,cutscene_ptr_type func,int free_sounds) {
 	load_chtab_from_file(id_chtab_8_princessroom, 950, "PV.DAT", 1<<13);
 	load_chtab_from_file(id_chtab_9_princessbed, 980, "PV.DAT", 1<<14);
 	current_target_surface = offscreen_surface;
-	method_6_blit_img_to_scr(get_image(id_chtab_8_princessroom, 0), 0, 0, 0);
-	method_6_blit_img_to_scr(get_image(id_chtab_9_princessbed, 0), 0, 142, blitters_2_or);
+	image_type* room = get_drawn_image(chtab_addrs[id_chtab_8_princessroom], 0);
+	if (room != NULL) method_6_blit_img_to_scr(room, 0, 0, 0);
+	image_type* bed = get_drawn_image(chtab_addrs[id_chtab_9_princessbed], 0);
+	if (bed != NULL) method_6_blit_img_to_scr(bed, 0, 142, blitters_2_or);
 
 	// Free the images that are not needed anymore.
 	free_all_chtabs_from(id_chtab_9_princessbed);

@@ -808,6 +808,7 @@ int add_backtable(short chtab_id, int id, sbyte xh, sbyte xl, int ybottom, int b
 	}
 	backtable_item->y = ybottom - image->h/*height*/ + 1;
 	backtable_item->blit = blit;
+	backtable_item->clip_top = NO_CLIP_TOP;
 	if (draw_mode) {
 		draw_back_fore(0, index);
 	}
@@ -833,6 +834,7 @@ int add_foretable(short chtab_id, int id, sbyte xh, sbyte xl, int ybottom, int b
 		return 0;
 	}
 	foretable_item->y = ybottom - image->h/*height*/ + 1;
+	foretable_item->clip_top = NO_CLIP_TOP;
 	foretable_item->blit = blit;
 	if (draw_mode) {
 		draw_back_fore(1, index);
@@ -952,7 +954,19 @@ void draw_back_fore(int which_table,int index) {
 		mask = chtab->images[chtab->n_images / 2 + table_entry->id];
 	}
 	*/
-	draw_image(image, mask, table_entry->xh * 8 + table_entry->xl, table_entry->y, table_entry->blit);
+	int xpos = table_entry->xh * 8 + table_entry->xl;
+	int ypos = table_entry->y;
+	if (image != NULL && use_mac_graphics) {
+		image = mask = get_drawn_image(chtab_addrs[table_entry->chtab_id], table_entry->id);
+	}
+	if (table_entry->clip_top != NO_CLIP_TOP) {
+		rect_type clip = {.top = table_entry->clip_top, .left = 0, .bottom = 200, .right = 320};
+		set_clip_rect(&clip);
+	}
+	draw_image(image, mask, xpos, ypos, table_entry->blit);
+	if (table_entry->clip_top != NO_CLIP_TOP) {
+		reset_clip_rect();
+	}
 }
 
 
@@ -1019,15 +1033,25 @@ void draw_mid(int index) {
 			xpos = calc_screen_x_coord(xpos);
 		}
 	}
+	image_type* dos_image = image;
 	if (blit_flip) {
 		xpos -= image->w/*width*/;
+	}
+	if (use_mac_graphics) {
+		// Macintosh graphics: the replacement picture carries its offset from the DOS image's place.
+		image_type* drawn = get_drawn_image(chtab_addrs[chtab_id], image_id);
+		if (drawn != NULL) image = mask = drawn;
+	}
+	if (blit_flip) {
 		// for this version:
 		need_free_image = 1;
-		image = hflip(image);
+		image = hflip_drawn_image(image, dos_image);
 	}
 
 	if (midtable_entry->peel) {
-		add_peel(round_xpos_to_byte(xpos, 0), round_xpos_to_byte(image->w/*width*/ + xpos, 1), ypos, image->h/*height*/);
+		rect_type covered;
+		image_logical_rect(image, xpos, ypos, &covered);
+		add_peel(round_xpos_to_byte(covered.left, 0), round_xpos_to_byte(covered.right, 1), covered.top, covered.bottom - covered.top);
 	}
 	//printf("Midtable: drawing (chtab %d, image %d) at (x=%d, y=%d)\n",chtab_id,image_id,xpos,ypos); // debug
 	draw_image(image, mask, xpos, ypos, blit);
@@ -1068,10 +1092,7 @@ void draw_image(image_type* image,image_type* mask,int xpos,int ypos,int blit) {
 		break;
 	}
 	if (need_drects) {
-		rect.left = rect.right = xpos;
-		rect.right += image->w/*width*/;
-		rect.top = rect.bottom = ypos;
-		rect.bottom += image->h/*height*/;
+		image_logical_rect(image, xpos, ypos, &rect);
 		add_drect(&rect);
 	}
 }
@@ -1432,8 +1453,18 @@ void draw_leveldoor() {
 	}
 	leveldoor_ybottom = ybottom - (modifier_left & 3) - 48;
 	short y = ybottom - modifier_left;
+	// Macintosh graphics: the level door is one tall panel instead of a stack of strips.
+	// Draw it once, at the bottom strip's place, hidden above the opening.
+	chtab_type* environment = chtab_addrs[id_chtab_6_environment];
+	bool mac_door = use_mac_graphics && environment != NULL && environment->mac_images != NULL &&
+	                environment->n_images > 32 && environment->mac_images[32] != NULL;
 	do { // runs at least once
-		add_backtable(id_chtab_6_environment, 33 /*level door bottom*/, draw_xh + 1, 0, leveldoor_ybottom, blitters_0_no_transp, 0);
+		bool last = !(y > leveldoor_ybottom);
+		if (!mac_door || last) {
+			if (add_backtable(id_chtab_6_environment, 33 /*level door bottom*/, draw_xh + 1, 0, leveldoor_ybottom, blitters_0_no_transp, 0) && mac_door) {
+				backtable[backtable_count - 1].clip_top = draw_main_y - 64 - 5; // top of the level door top
+			}
+		}
 		if (y > leveldoor_ybottom) leveldoor_ybottom += 4;
 		else break;
 	} while (true);

@@ -90,7 +90,9 @@ typedef struct back_table_type {
 	byte chtab_id;
 	byte id;
 	int blit;
+	short clip_top; // NO_CLIP_TOP, or don't draw above this y (Macintosh level door panel)
 } back_table_type;
+#define NO_CLIP_TOP (-32768)
 
 typedef struct midtable_type {
 	sbyte xh;
@@ -262,6 +264,13 @@ typedef struct chtab_type {
 	word n_images;
 	word chtab_palette_bits;
 	word has_palette_bits;
+	// Macintosh graphics (use_mac_graphics): replacements for images[], or NULL.
+	// Their scale and their offset from where images[i] would go are kept with them (see surface_scale()).
+	image_type** mac_images;
+	byte mac_guard_colors; // the replacements are guards, recolored with the Macintosh guard color tables
+	byte mac_loaded; // the replacements were looked for (they are loaded when first needed)
+	short resource; // the images are resources resource+1 and on...
+	char dat_names[4][16]; // ...of these DAT files (folders: data/MAC/<name>), the ones open when they were loaded
 	// This is a variable-size array, with n_images elements.
 	image_type* images[];
 } chtab_type;

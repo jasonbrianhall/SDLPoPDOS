@@ -154,6 +154,7 @@ enum setting_ids {
 	SETTING_FULLSCREEN,
 	SETTING_USE_HARDWARE_ACCELERATION,
 	SETTING_USE_CORRECT_ASPECT_RATIO,
+	SETTING_USE_MAC_GRAPHICS,
 	SETTING_USE_INTEGER_SCALING,
 	SETTING_SCALING_TYPE,
 	SETTING_ENABLE_FADE,
@@ -382,6 +383,10 @@ setting_type visuals_settings[] = {
 				.text = "Use 4:3 aspect ratio",
 				.explanation = "Render the game in the originally intended 4:3 aspect ratio."
 				               "\nNB. Works best using a high resolution."},
+		{.id = SETTING_USE_MAC_GRAPHICS, .style = SETTING_STYLE_TOGGLE, .linked = &use_mac_graphics,
+				.text = "Macintosh graphics",
+				.explanation = "Draw the graphics of the Macintosh version, at their own resolution (640x400).\n"
+				               "You can also switch with Ctrl+M at any time."},
 		{.id = SETTING_USE_INTEGER_SCALING, .style = SETTING_STYLE_TOGGLE, .linked = &use_integer_scaling,
 				.required = &integer_scaling_possible,
 				.text = "Use integer scaling",
@@ -1406,6 +1411,10 @@ void turn_setting_on_off(int setting_id, byte new_state, void* linked) {
 			use_correct_aspect_ratio = new_state;
 			apply_aspect_ratio();
 			break;
+		case SETTING_USE_MAC_GRAPHICS:
+			if (new_state && !mac_graphics_available()) break;
+			set_mac_graphics(new_state);
+			break;
 		case SETTING_USE_INTEGER_SCALING:
 			use_integer_scaling = new_state;
 			if (new_state) {
@@ -1526,10 +1535,9 @@ void draw_setting_explanation(setting_type* setting) {
 }
 
 void draw_image_with_blending(image_type* image, int xpos, int ypos) {
-	SDL_Rect src_rect = {0, 0, image->w, image->h};
-	SDL_Rect dest_rect = {xpos, ypos, image->w, image->h};
+	SDL_Rect dest_rect = {xpos, ypos, 0, 0};
 	SDL_SetColorKey(image, SDL_TRUE, 0);
-	if (SDL_BlitSurface(image, &src_rect, current_target_surface, &dest_rect) != 0) {
+	if (!blit_logical(image, NULL, current_target_surface, &dest_rect)) {
 		sdlperror("SDL_BlitSurface");
 		quit(1);
 	}
@@ -2326,6 +2334,7 @@ void process_ingame_settings_user_managed(SDL_RWops* rw, rw_process_func_type pr
 	process(start_fullscreen);
 	process(use_hardware_acceleration);
 	process(use_correct_aspect_ratio);
+	process(use_mac_graphics);
 	process(use_integer_scaling);
 	process(scaling_type);
 	process(enable_fade);
