@@ -56,11 +56,19 @@ BANKS = {
 # princess room bank continues the DOS princess room sprites (pillar, hourglass, sand).
 FIRST_ID = {960: 950}
 CENTERED = {40, 50, 950}   # title and cutscene screens: center on the DOS picture
-SEARCHED = {150, 700}      # potions, swords: the Mac uses its own offset tables
+SEARCHED = {700}           # swords: the Mac uses its own offset tables
+# Flames, potions, bubbles: always where the Mac game puts them (their origins). Matched one by
+# one against the DOS pictures, animation frames would jump around, and potion jars would reach
+# into the next tile (which is not redrawn when the potion is taken).
+ORIGIN_ONLY = {150}
 # Torch flames: all frames share one box and one origin, which puts the flame's base where
-# the DOS flame's base is. Matched one by one they would jump around, so always use it.
-# Their black background (the game draws them opaque) is made transparent, for the princess room.
+# the DOS flame's base is. Their black background (the game draws them opaque) is made
+# transparent, for the princess room.
 FLAMES = {(150, slot) for slot in range(1, 10)}
+# The potion bubbles: the game erases the last bubble with the bubble mask (DOS 173) before
+# drawing the next. The Mac mask is smaller than some Mac bubbles: use all of them together.
+BUBBLES = [(150, slot) for slot in range(16, 23)]
+BUBBLE_MASK = (150, 23)
 GUARD_FIRST, GUARD_COUNT = 105, 13  # palette slots recolored by the guard color tables
 
 
@@ -399,6 +407,25 @@ def convert(palette, guards, shapes, data_dir, out_dir, verbose):
             # Where the Mac game draws it: its origin sits at twice the DOS
             # bottom-left corner, 2 Mac pixels up.
             X, Y = -ox, 2 * dh - 2 - oy
+            if bank in ORIGIN_ONLY and (bank, slot) not in FLAMES:
+                if (bank, slot) == BUBBLE_MASK and all(b in shapes for b in BUBBLES):
+                    placed = [(-shapes[b][2], 2 * dh - 2 - shapes[b][3], shapes[b][1]) for b in BUBBLES]
+                    x0 = min(x for x, y, m in placed)
+                    y0 = min(y for x, y, m in placed)
+                    x1 = max(x + m.shape[1] for x, y, m in placed)
+                    y1 = max(y + m.shape[0] for x, y, m in placed)
+                    keep = np.zeros((y1 - y0, x1 - x0), bool)
+                    for x, y, m in placed:
+                        keep[y - y0:y - y0 + m.shape[0], x - x0:x - x0 + m.shape[1]] |= m
+                    idx = np.where(keep, 1, 0).astype(np.uint8)  # drawn in one color: only the shape counts
+                    X, Y = x0, y0
+                else:
+                    keep = opaque
+                os.makedirs(os.path.join(out_dir, folder), exist_ok=True)
+                write_png(os.path.join(out_dir, folder, 'res%d.png' % rid), idx, keep, palette, keep_palette=False)
+                offsets.setdefault(folder, []).append((rid, X, Y))
+                made += 1
+                continue
             if (bank, slot) in FLAMES:
                 black = np.array([sum(c) <= 30 for c in palette])[idx]
                 keep = opaque & ~black
