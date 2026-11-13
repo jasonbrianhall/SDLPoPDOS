@@ -20,6 +20,12 @@ The authors of this program may be contacted at https://forum.princed.org
 
 #include "common.h"
 
+// Pieces of scenery that DOS draws opaque but that do not move. The DOS pictures fill their whole
+// box; the Macintosh ones often do not, and drawn opaque their empty parts would come out black:
+// draw them transparent with the Macintosh graphics. (Moving pieces such as gates, doors and flames
+// stay opaque: that is how they erase their last frame.)
+#define STATIC_OPAQUE (use_mac_graphics ? blitters_10h_transp : blitters_0_no_transp)
+
 // data:27E0
 add_table_type ptr_add_table = add_backtable;
 
@@ -486,7 +492,7 @@ void draw_tile_right() {
 				add_backtable(id_chtab_6_environment, tile_table[tile_left].stripe_id, draw_xh, 0, draw_main_y - 27, blitters_2_or, 0);
 			}
 			if (tile_left == tiles_19_torch || tile_left == tiles_30_torch_with_debris) {
-				add_backtable(id_chtab_6_environment, 146 /*torch base*/, draw_xh, 0, draw_bottom_y - 28, blitters_0_no_transp, 0);
+				add_backtable(id_chtab_6_environment, 146 /*torch base*/, draw_xh, 0, draw_bottom_y - 28, STATIC_OPAQUE, 0);
 			}
 			break;
 		case tiles_0_empty:
@@ -498,7 +504,7 @@ void draw_tile_right() {
 			num = modifier_left;
 			if (num > 3) num = 0;
 			if (num == !!custom->tbl_level_type[current_level]) return;
-			add_backtable(id_chtab_6_environment, blueline_fram3[num], draw_xh, 0, draw_main_y - 20, blitters_0_no_transp, 0);
+			add_backtable(id_chtab_6_environment, blueline_fram3[num], draw_xh, 0, draw_main_y - 20, STATIC_OPAQUE, 0);
 			break;
 		case tiles_7_doortop_with_floor:
 		case tiles_12_doortop:
@@ -507,7 +513,7 @@ void draw_tile_right() {
 			break;
 		case tiles_20_wall:
 			if (custom->tbl_level_type[current_level] && (modifier_left & 0x80) == 0) {
-				add_backtable(id_chtab_6_environment, 84 /*wall stripe*/, draw_xh + 3, 0, draw_main_y - 27, blitters_0_no_transp, 0);
+				add_backtable(id_chtab_6_environment, 84 /*wall stripe*/, draw_xh + 3, 0, draw_main_y - 27, STATIC_OPAQUE, 0);
 			}
 			add_backtable(id_chtab_7_environmentwall, 1, draw_xh, 0, tile_table[tile_left].right_y + draw_main_y, blitters_2_or, 0);
 			break;
@@ -709,7 +715,7 @@ void draw_tile_fore() {
 			break;
 		case tiles_20_wall:
 			if (custom->tbl_level_type[current_level] == 0 || custom->enable_wda_in_palace || graphics_mode != gmMcgaVga) {
-				add_foretable(id_chtab_7_environmentwall, wall_fram_main[curr_modifier & 0x7F], draw_xh, 0, draw_main_y, blitters_0_no_transp, 0);
+				add_foretable(id_chtab_7_environmentwall, wall_fram_main[curr_modifier & 0x7F], draw_xh, 0, draw_main_y, STATIC_OPAQUE, 0);
 			}
 			if (graphics_mode != gmCga && graphics_mode != gmHgaHerc) {
 				wall_pattern(1, 1);
@@ -748,7 +754,7 @@ void draw_tile_fore() {
 				add_foretable(id_chtab_1_flameswordpotion, id, xh, 6, ybottom, blitters_10h_transp, 0);
 			} else {
 				if ((curr_tile == tiles_3_pillar && custom->tbl_level_type[current_level] == 0) || (curr_tile >= tiles_27_lattice_small && curr_tile < tiles_30_torch_with_debris)) {
-					add_foretable(id_chtab_6_environment, id, xh, 0, ybottom, blitters_0_no_transp, 0);
+					add_foretable(id_chtab_6_environment, id, xh, 0, ybottom, STATIC_OPAQUE, 0);
 				} else {
 					add_foretable(id_chtab_6_environment, id, xh, 0, ybottom, blitters_10h_transp, 0);
 				}

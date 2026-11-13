@@ -385,9 +385,71 @@ def write_png(path, pixels, opaque, palette, keep_palette):
     im.save(path, optimize=True)
 
 
+# DOS pictures that are cut out of other DOS pictures and have no Mac version of their own:
+# the floor pieces drawn over the prince while he climbs up (floor_left_overlay).
+CUTOUTS = {'VDUNGEON': (232, 350, 351), 'VPALACE': (232, 350, 351)}
+
+
+def derive_cutouts(made_images, offsets, palette, data_dir, out_dir, verbose):
+    """Make Mac versions of the CUTOUTS: find the DOS picture each is cut from, and cut the
+    same piece (its shape, doubled) out of that picture's Mac version."""
+    made = 0
+    for folder, ids in CUTOUTS.items():
+        for rid in ids:
+            if (folder, rid) in made_images:
+                continue
+            path = os.path.join(data_dir, folder, 'res%d.png' % rid)
+            if not os.path.exists(path):
+                continue
+            cut = Image.open(path)
+            cut_rgb = np.array(cut.convert('RGB')).astype(int)
+            (cw, ch), cut_mask = dos_picture(path)
+            # The smallest picture it is cut from (the plainest: e.g. the floor piece itself).
+            found = None
+            for (f, source_id), (px, opq, sx0, sy0) in sorted(made_images.items()):
+                if f != folder or source_id in ids:
+                    continue
+                source_path = os.path.join(data_dir, folder, 'res%d.png' % source_id)
+                (sw, sh_), source_mask = dos_picture(source_path)
+                if sw < cw or sh_ < ch or (found and sw * sh_ >= found[3]):
+                    continue
+                source_rgb = np.array(Image.open(source_path).convert('RGB')).astype(int)
+                for y in range(sh_ - ch + 1):
+                    for x in range(sw - cw + 1):
+                        if (source_mask[y:y + ch, x:x + cw][cut_mask].all() and
+                                (source_rgb[y:y + ch, x:x + cw][cut_mask] == cut_rgb[cut_mask]).all()):
+                            found = (source_id, x, y, sw * sh_)
+                            break
+                    if found and found[0] == source_id:
+                        break
+            if not found:
+                continue
+            source_id, cx, cy, _ = found
+            px, opq, sx0, sy0 = made_images[(folder, source_id)]
+            # In Mac pixels relative to twice the cutout's top-left corner.
+            shape = np.repeat(np.repeat(cut_mask, 2, axis=0), 2, axis=1)
+            out_px = np.zeros(shape.shape, np.int32)
+            out_opq = np.zeros(shape.shape, bool)
+            for y in range(shape.shape[0]):
+                for x in range(shape.shape[1]):
+                    u, v = x + 2 * cx - sx0, y + 2 * cy - sy0
+                    if shape[y, x] and 0 <= v < opq.shape[0] and 0 <= u < opq.shape[1] and opq[v, u]:
+                        out_px[y, x] = px[v, u]
+                        out_opq[y, x] = True
+            if not out_opq.any():
+                continue
+            write_png(os.path.join(out_dir, folder, 'res%d.png' % rid), out_px, out_opq, palette, keep_palette=False)
+            offsets.setdefault(folder, []).append((rid, 0, 0))
+            made += 1
+            if verbose:
+                print('  %s/res%d: cut out of res%d' % (folder, rid, source_id))
+    return made
+
+
 def convert(palette, guards, shapes, data_dir, out_dir, verbose):
     made = skipped = 0
     offsets = {}
+    made_images = {}
     for (bank, slot), (idx, opaque, ox, oy) in sorted(shapes.items()):
         folder = BANKS[bank]
         rid = FIRST_ID.get(bank, bank % 1000) + slot
@@ -471,7 +533,9 @@ def convert(palette, guards, shapes, data_dir, out_dir, verbose):
         write_png(os.path.join(out_dir, folder, 'res%d.png' % rid), px, opq, palette,
                   keep_palette=(bank == 1750))
         offsets.setdefault(folder, []).append((rid, x0, y0))
+        made_images[(folder, rid)] = (px, opq, x0, y0)
         made += 1
+    made += derive_cutouts(made_images, offsets, palette, data_dir, out_dir, verbose)
     for folder, rows in offsets.items():
         with open(os.path.join(out_dir, folder, 'OFFSETS.TXT'), 'w', newline='\r\n') as f:
             f.write('; id x y: where the picture goes, in Macintosh pixels (twice the DOS ones),\n'
