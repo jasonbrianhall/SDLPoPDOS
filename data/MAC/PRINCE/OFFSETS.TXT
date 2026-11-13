@@ -1,14 +1,14 @@
 ; id x y: where the picture goes, in Macintosh pixels (twice the DOS ones),
 ; relative to the top-left corner of the DOS picture it replaces
-151 -8 4
-152 -8 4
-153 -10 2
-154 -10 0
-155 -10 2
-156 -10 2
-157 -10 4
-158 8 8
-159 -10 2
+151 0 0
+152 0 0
+153 0 0
+154 0 0
+155 0 0
+156 0 0
+157 0 0
+158 0 0
+159 0 0
 160 0 10
 161 -4 6
 162 0 -2

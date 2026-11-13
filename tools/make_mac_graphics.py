@@ -56,7 +56,11 @@ BANKS = {
 # princess room bank continues the DOS princess room sprites (pillar, hourglass, sand).
 FIRST_ID = {960: 950}
 CENTERED = {40, 50, 950}   # title and cutscene screens: center on the DOS picture
-SEARCHED = {150, 700}      # flames, potions, swords: the Mac uses its own offset tables
+SEARCHED = {150, 700}      # potions, swords: the Mac uses its own offset tables
+# Torch flames: all frames share one box and one origin, which puts the flame's base where
+# the DOS flame's base is. Matched one by one they would jump around, so always use it.
+# Their black background (the game draws them opaque) is made transparent, for the princess room.
+FLAMES = {(150, slot) for slot in range(1, 10)}
 GUARD_FIRST, GUARD_COUNT = 105, 13  # palette slots recolored by the guard color tables
 
 
@@ -395,6 +399,15 @@ def convert(palette, guards, shapes, data_dir, out_dir, verbose):
             # Where the Mac game draws it: its origin sits at twice the DOS
             # bottom-left corner, 2 Mac pixels up.
             X, Y = -ox, 2 * dh - 2 - oy
+            if (bank, slot) in FLAMES:
+                black = np.array([sum(c) <= 30 for c in palette])[idx]
+                keep = opaque & ~black
+                # Not trimmed: drawn opaque, each frame's whole box erases the one before.
+                os.makedirs(os.path.join(out_dir, folder), exist_ok=True)
+                write_png(os.path.join(out_dir, folder, 'res%d.png' % rid), idx, keep, palette, keep_palette=False)
+                offsets.setdefault(folder, []).append((rid, X, Y))
+                made += 1
+                continue
             sx, sy = X & 1, Y & 1
             _, opq = halve(idx, opaque, palette, sx, sy)
             x0, y0 = (X - sx) // 2, (Y - sy) // 2
