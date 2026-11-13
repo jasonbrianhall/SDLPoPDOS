@@ -564,7 +564,10 @@ void draw_tile_anim_right() {
 				}
 #endif
 				// images 1..9 are the flames
-				add_backtable(id_chtab_1_flameswordpotion, modifier_left + 1, draw_xh + 1, 0, draw_main_y - 40, blit, 0);
+				// The Macintosh palace torch holders have their cup a little further right than the dungeon ones:
+				// move the flame one pixel right to sit in it.
+				sbyte flame_xl = (use_mac_graphics && custom->tbl_level_type[current_level] != 0) ? 1 : 0;
+				add_backtable(id_chtab_1_flameswordpotion, modifier_left + 1, draw_xh + 1, flame_xl, draw_main_y - 40, blit, 0);
 			}
 		break;
 	}

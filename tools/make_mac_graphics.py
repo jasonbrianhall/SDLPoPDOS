@@ -56,7 +56,7 @@ BANKS = {
 # princess room bank continues the DOS princess room sprites (pillar, hourglass, sand).
 FIRST_ID = {960: 950}
 CENTERED = {40, 50, 950}   # title and cutscene screens: center on the DOS picture
-SEARCHED = {700}           # swords: the Mac uses its own offset tables
+SEARCHED = {700}           # swords: placed by the game's sword tables, not by their origins
 # Flames, potions, bubbles: always where the Mac game puts them (their origins). Matched one by
 # one against the DOS pictures, animation frames would jump around, and potion jars would reach
 # into the next tile (which is not redrawn when the potion is taken).
@@ -447,10 +447,32 @@ def derive_cutouts(made_images, offsets, palette, data_dir, out_dir, verbose):
     return made
 
 
+def align_to_twins(made_images, offsets, from_piece, data_dir, verbose):
+    """A picture placed by matching one of its pieces is only roughly placed. If another
+    picture has the same DOS picture and the same Mac picture and was placed by its origin
+    (e.g. the palace wall patterns 244/324), put it where that one goes, so they line up."""
+    def same(a, b):
+        return a.shape == b.shape and (a == b).all()
+    for folder, rid in sorted(from_piece):
+        px, opq, _, _ = made_images[(folder, rid)]
+        dos = np.array(Image.open(os.path.join(data_dir, folder, 'res%d.png' % rid)).convert('RGBA'))
+        for (f, twin), (tpx, topq, tx, ty) in sorted(made_images.items()):
+            if f != folder or twin == rid or (f, twin) in from_piece:
+                continue
+            twin_dos = np.array(Image.open(os.path.join(data_dir, f, 'res%d.png' % twin)).convert('RGBA'))
+            if same(dos, twin_dos) and same(opq, topq) and same(np.where(opq, px, 0), np.where(topq, tpx, 0)):
+                made_images[(folder, rid)] = (px, opq, tx, ty)
+                offsets[folder] = [(r, tx, ty) if r == rid else (r, x, y) for r, x, y in offsets[folder]]
+                if verbose:
+                    print('  %s/res%d: placed like res%d' % (folder, rid, twin))
+                break
+
+
 def convert(palette, guards, shapes, data_dir, out_dir, verbose):
     made = skipped = 0
     offsets = {}
     made_images = {}
+    from_piece = set()  # pictures placed by matching one of their pieces
     for (bank, slot), (idx, opaque, ox, oy) in sorted(shapes.items()):
         folder = BANKS[bank]
         rid = FIRST_ID.get(bank, bank % 1000) + slot
@@ -501,20 +523,27 @@ def convert(palette, guards, shapes, data_dir, out_dir, verbose):
             sx, sy = X & 1, Y & 1
             _, opq = halve(idx, opaque, palette, sx, sy)
             x0, y0 = (X - sx) // 2, (Y - sy) // 2
-            score = iou(grow(dos_mask), grow(opq), x0, y0)
-            if bank in SEARCHED or score < 0.5:
+            origin_score = iou(grow(dos_mask), grow(opq), x0, y0)
+            # How well the picture can match the DOS one at all (best placement), to leave out
+            # Mac pictures that are something else. The placement itself stays the Mac game's
+            # own (above): matching shapes misplaces pictures whose art differs from DOS.
+            _, whole = halve(idx, opaque, palette, 0, 0)
+            best_score, bx0, by0 = search(dos_mask, whole)
+            if bank in SEARCHED:  # placed by the game's own offset tables, not the origins
                 sx = sy = 0
-                _, opq = halve(idx, opaque, palette, 0, 0)
-                score, x0, y0 = search(dos_mask, opq)
-            # A Mac picture may bundle pieces that DOS draws separately: try each piece alone.
-            if opq.shape[0] > dh + 6 or opq.shape[1] > dw + 6:
-                parts = blobs(opq)
+                x0, y0 = bx0, by0
+            # A Mac picture may bundle pieces that DOS draws separately: then use the piece
+            # that is the DOS picture.
+            if whole.shape[0] > dh + 6 or whole.shape[1] > dw + 6:
+                parts = blobs(whole)
                 if 1 < len(parts) <= 16:
                     for part in parts:
                         s, px0, py0 = search(dos_mask, part)
-                        if s > score + 0.1:
-                            score, x0, y0 = s, px0, py0
-            if score < 0.45:
+                        if s > max(origin_score, best_score) + 0.1:
+                            sx = sy = 0
+                            x0, y0, best_score = px0, py0, s
+                            from_piece.add((folder, rid))
+            if max(best_score, origin_score) < 0.45:
                 skipped += 1
                 if verbose:
                     print('  skip %s/res%d (does not match the DOS picture)' % (folder, rid))
@@ -536,6 +565,7 @@ def convert(palette, guards, shapes, data_dir, out_dir, verbose):
         offsets.setdefault(folder, []).append((rid, x0, y0))
         made_images[(folder, rid)] = (px, opq, x0, y0)
         made += 1
+    align_to_twins(made_images, offsets, from_piece, data_dir, verbose)
     made += derive_cutouts(made_images, offsets, palette, data_dir, out_dir, verbose)
     for folder, rows in offsets.items():
         with open(os.path.join(out_dir, folder, 'OFFSETS.TXT'), 'w', newline='\r\n') as f:
