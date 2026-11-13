@@ -501,15 +501,24 @@ short princess_torch_pos_xh[] = {11, 26};
 short princess_torch_pos_xl[] = {5, 3};
 // data:0DFC
 short princess_torch_frame[] = {1, 6};
+// The Macintosh princess room has its wall torches elsewhere: flames go in its sconces.
+static const short mac_princess_torch_pos_xh[] = {9, 35};
+static const short mac_princess_torch_pos_xl[] = {3, 7};
+#define MAC_PRINCESS_TORCH_YBOTTOM 122
 
 // seg001:0808
 void princess_room_torch() {
 	for (short which = 2; which--; ) {
 		which_torch = !which_torch;
 		princess_torch_frame[which_torch] = get_torch_frame(princess_torch_frame[which_torch]);
-		// The Macintosh flames are drawn over the Macintosh room, which is not black behind them.
-		add_backtable(id_chtab_1_flameswordpotion, princess_torch_frame[which_torch] + 1, princess_torch_pos_xh[which_torch], princess_torch_pos_xl[which_torch], 116,
-		              use_mac_graphics ? blitters_10h_transp : blitters_0_no_transp, 0);
+		if (use_mac_graphics) {
+			// The Macintosh room is not black behind the flames: draw them transparent,
+			// and put back what was behind them (peel) before the next frame.
+			add_midtable(id_chtab_1_flameswordpotion, princess_torch_frame[which_torch] + 1, mac_princess_torch_pos_xh[which_torch], mac_princess_torch_pos_xl[which_torch],
+			             MAC_PRINCESS_TORCH_YBOTTOM, blitters_10h_transp, 1);
+		} else {
+			add_backtable(id_chtab_1_flameswordpotion, princess_torch_frame[which_torch] + 1, princess_torch_pos_xh[which_torch], princess_torch_pos_xl[which_torch], 116, 0, 0);
+		}
 	}
 }
 
