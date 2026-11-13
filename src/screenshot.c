@@ -585,8 +585,8 @@ void save_level_screenshot(bool want_extras) {
 
 	// Now we have the arrangement, let's make the picture!
 
-	int image_width = map_width*320;
-	int image_height = map_height*189+3+8;
+	int image_width = map_width*320*gfx_scale;
+	int image_height = (map_height*189+3+8)*gfx_scale;
 
 	SDL_Surface* map_surface = SDL_CreateRGBSurface(0, image_width, image_height, 32, Rmsk, Gmsk, Bmsk, Amsk);
 	if (map_surface == NULL) {
@@ -667,8 +667,8 @@ void save_level_screenshot(bool want_extras) {
 			int room = map[y][x];
 			if (room) {
 				SDL_Rect dest_rect;
-				dest_rect.x = x*320;
-				dest_rect.y = y*189;
+				dest_rect.x = x*320*gfx_scale;
+				dest_rect.y = y*189*gfx_scale;
 				switch_to_room(room);
 
 				if (want_extras) draw_extras();

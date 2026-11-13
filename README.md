@@ -228,6 +228,7 @@ Since version 1.23 SDLPoP now detects controllers plugged in while the game is a
 
 **The following don't exist in the original game:**
 
+* Ctrl+M: Switch between the DOS and the Macintosh graphics.
 * Ctrl+C: Show versions of SDL:
     * COMP: the SDL version SDLPoP was compiled against, i.e. the version of the SDL headers.
     * LINK: the SDL version SDLPoP was linked against, i.e. the version of SDL2.dll (or its equivalent on other platforms).
@@ -313,6 +314,27 @@ The possible file names can be found in `data/music/names.txt`.
 The file name has to be the part after the equals sign, followed by `.ogg`.
 
 You can find an example alternate music set in the ZIP mentioned above, in the `ogg_MT-32` folder.
+
+### Macintosh graphics
+
+SDLPoP can show the graphics of the 1992 color Macintosh version (the turbaned prince, the Mac
+dungeon and palace, guards, title and cutscenes) instead of the DOS ones. They are in `data/MAC`.
+
+Switch at any time with **Ctrl+M**, or with Settings > Visuals > Macintosh graphics.
+To start with them, set `use_mac_graphics = true` in SDLPoP.ini.
+
+The Mac art has twice the DOS resolution, so with it SDLPoP draws the game at 640x400:
+the Mac sprites at their own resolution, and any DOS sprite without a Mac version (and the text)
+doubled. The picture is only scaled down where the screen is smaller than 640x400
+(on MS-DOS: VGA mode 13h, or a 320x200 VESA mode chosen with PRINCE_VIDEO).
+Only the drawing changes: the game still works in 320x200 and uses the DOS sprites' sizes for
+collisions, so gameplay and replays are the same. Guards get the Mac guard colors of their level.
+Drawing four times as many pixels is slower; on MS-DOS this wants a fast Pentium or better.
+
+`data/MAC` was made with `tools/make_mac_graphics.py` from the Mac game
+(`python3 tools/make_mac_graphics.py "Prince of Persia.sit"`; needs Pillow, numpy and `unar`).
+Each sprite there is a PNG with palette color 0 transparent; `OFFSETS.TXT` gives where each one
+goes, in Mac pixels, relative to the DOS sprite it replaces. Delete a PNG to use the DOS sprite.
 
 ## MODS
 

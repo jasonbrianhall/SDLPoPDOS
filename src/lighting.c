@@ -39,12 +39,13 @@ void init_lighting() {
 		return;
 	}
 
-	screen_overlay = SDL_CreateRGBSurface(0, 320, 192, 32, Rmsk, Gmsk, Bmsk, Amsk);
+	screen_overlay = SDL_CreateRGBSurface(0, 320 * gfx_scale, 192 * gfx_scale, 32, Rmsk, Gmsk, Bmsk, Amsk);
 	if (screen_overlay == NULL) {
 		sdlperror("SDL_CreateRGBSurface (screen_overlay)");
 		enable_lighting = 0;
 		return;
 	}
+	if (gfx_scale != 1) set_surface_scale(screen_overlay, gfx_scale);
 
 	// "color modulate", i.e. multiply.
 	int result = SDL_SetSurfaceBlendMode(screen_overlay, SDL_BLENDMODE_MOD);
@@ -59,6 +60,20 @@ void init_lighting() {
 
 	// ambient lighting
 	bgcolor = SDL_MapRGBA_S(screen_overlay, ambient_level, ambient_level, ambient_level, SDL_ALPHA_OPAQUE);
+}
+
+// Make the lighting overlay again for a new gfx_scale (see set_mac_graphics()).
+void rescale_lighting(void) {
+	if (screen_overlay == NULL) return;
+	SDL_FreeSurface(screen_overlay);
+	screen_overlay = SDL_CreateRGBSurface(0, 320 * gfx_scale, 192 * gfx_scale, 32, Rmsk, Gmsk, Bmsk, Amsk);
+	if (screen_overlay == NULL) {
+		enable_lighting = 0;
+		return;
+	}
+	if (gfx_scale != 1) set_surface_scale(screen_overlay, gfx_scale);
+	SDL_SetSurfaceBlendMode(screen_overlay, SDL_BLENDMODE_MOD);
+	redraw_lighting();
 }
 
 // Recreate the lighting overlay based on the torches in the current room.
@@ -89,7 +104,7 @@ void redraw_lighting() {
 			dest_rect.w = lighting_mask->w;
 			dest_rect.h = lighting_mask->h;
 
-			int result = SDL_BlitSurface(lighting_mask, NULL, screen_overlay, &dest_rect);
+			int result = blit_logical(lighting_mask, NULL, screen_overlay, &dest_rect) ? 0 : -1;
 			if (result != 0) {
 				sdlperror("SDL_BlitSurface (lighting_mask)");
 			}
@@ -110,7 +125,7 @@ void update_lighting(const rect_type* target_rect_ptr) {
 
 	SDL_Rect sdlrect;
 	rect_to_sdlrect(target_rect_ptr, &sdlrect);
-	int result = SDL_BlitSurface(screen_overlay, &sdlrect, onscreen_surface_, &sdlrect);
+	int result = blit_logical(screen_overlay, &sdlrect, onscreen_surface_, &sdlrect) ? 0 : -1;
 	if (result != 0) {
 		sdlperror("SDL_BlitSurface (screen_overlay)");
 	}

@@ -1,0 +1,27 @@
+; id x y: where the picture goes, in Macintosh pixels (twice the DOS ones),
+; relative to the top-left corner of the DOS picture it replaces
+753 7 -3
+754 6 -2
+755 3 -4
+756 4 -2
+757 4 -3
+758 0 2
+759 0 -3
+760 0 -1
+761 3 -3
+762 0 -4
+763 0 -2
+764 7 -3
+765 8 -3
+766 8 -2
+767 4 -2
+768 0 -3
+769 0 -4
+770 3 -4
+771 0 -1
+772 0 -1
+773 1 -6
+774 0 -6
+775 0 -6
+777 1 -3
+778 0 0
